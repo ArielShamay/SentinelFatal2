@@ -1,0 +1,11 @@
+[core]
+	repositoryformatversion = 0
+	filemode = false
+	bare = false
+	logallrefupdates = true
+	worktree = C:/Users/ariel/Desktop/SentinelFatal2
+	symlinks = false
+	ignorecase = true
+[user]
+	name = Ariel Shamay
+	email = 157797315+ArielShamay@users.noreply.github.com

@@ -1,0 +1,54 @@
+# train_config.yaml — Hyperparameters Reference Card
+# Source of truth: docs/work_plan.md, Part ה (Hyperparameters Reference Card)
+# Legend: ✓ מאמר = sourced from paper  |  ⚠ הנחה = assumption (logged in docs/deviation_log.md)
+#
+# Paper: arXiv:2601.06149v1 — docs/2601.06149v1.pdf
+
+data:
+  fs: 4                        # Hz — ✓ מאמר Section II-A
+  window_len: 1800             # samples (7.5 min) — ✓ מאמר Section II-C
+  patch_len: 48                # samples per patch — ✓ מאמר Equation 1
+  patch_stride: 24             # hop between patches — ✓ מאמר Equation 1
+  n_patches: 73                # (1800-48)/24 + 1 = 73 — ✓ computed
+  n_channels: 2                # FHR + UC — ✓ מאמר Section II-A
+  ph_threshold: 7.15           # acidemia threshold — ⚠ project policy S8 (≤ 7.15 inclusive); paper: pH < 7.15 (strict)
+
+model:
+  d_model: 128                 # embedding dimension — ⚠ הנחה S2 (PatchTST original; small dataset)
+  num_layers: 3                # transformer layers — ⚠ הנחה S2
+  n_heads: 4                   # attention heads (128/4 = 32 dim/head) — ⚠ הנחה S2
+  ffn_dim: 256                 # feed-forward dimension (2×d_model) — ⚠ הנחה S2
+  dropout: 0.2                 # dropout rate — ✓ מאמר Section II-C
+  norm_type: batch_norm        # BatchNorm (not LayerNorm) — ✓ מאמר Section II-C
+  # Derived: classification head input dim = n_patches * d_model * n_channels = 73*128*2 = 18688
+
+pretrain:
+  mask_ratio: 0.4              # fraction of FHR patches masked — ✓ מאמר Section II-D
+  min_group_size: 2            # contiguous group minimum size — ✓ מאמר Section II-D Figure 4
+  max_group_size: 6            # contiguous group maximum size — ⚠ הנחה (no paper source)
+  masking_channel: fhr         # only FHR masked; UC always visible — ✓ מאמר Section II-D
+  mask_value: 0.0              # zero masking — ✓ מאמר Section II-D
+  optimizer: adam              # — ✓ מאמר Section II-D
+  lr: 1.0e-4                   # learning rate — ✓ מאמר Section II-D
+  max_epochs: 200              # — ⚠ הנחה S5 (paper unspecified for pretrain)
+  patience: 10                 # early stopping on val reconstruction loss — ⚠ הנחה S5
+  batch_size: 64               # — ⚠ הנחה S6
+  window_stride: 900           # sliding window stride (50% overlap) — ⚠ הנחה S4
+
+finetune:
+  optimizer: adamw             # — ✓ מאמר Section II-E
+  lr_backbone: 1.0e-5          # differential LR for backbone — ⚠ הנחה S6
+  lr_head: 1.0e-4              # differential LR for head — ⚠ הנחה S6
+  weight_decay: 1.0e-2         # AdamW weight decay — ⚠ הנחה S6
+  max_epochs: 100              # — ✓ מאמר Section II-E
+  patience: 15                 # early stopping on val AUC — ✓ מאמר Section II-E
+  batch_size: 32               # small dataset (441 recordings) — ⚠ הנחה S6
+  gradient_clip: 1.0           # max gradient norm — ⚠ הנחה S6
+  n_classes: 2                 # binary: 0=normal 1=acidemia — ⚠ הנחה (binary per project design; paper uses binary outputs but does not name n_classes)
+
+alerting:
+  threshold: 0.5               # alert segment threshold — ✓ מאמר Section II-F
+  inference_stride_repro: 1    # 1-sample stride for official evaluation — ✓ מאמר Section II-F
+  inference_stride_runtime: 60 # 15-sec stride for operational demo only — ⚠ הנחה S6
+
+seed: 42                       # ⚠ הנחה (no source; standard practice for reproducibility)

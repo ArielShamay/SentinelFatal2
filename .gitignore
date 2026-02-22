@@ -1,0 +1,100 @@
+# ─── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ─── Virtual environments ─────────────────────────────────────────────────────
+.venv/
+venv/
+ENV/
+env/
+
+# ─── Jupyter ──────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+
+# ─── VS Code / IDEs ───────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ─── Git internal / backup directories ───────────────────────────────────────
+.git_alt/
+
+# ─── Agent/AI tool settings (not project code) ────────────────────────────────
+.claude/
+
+# ─── OS ───────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ─── Data: raw & processed signals (large binary files) ──────────────────────
+# Raw extracted CSVs (~552 + 135 large files)
+data/raw/
+
+# Processed numpy arrays (~552 + 135 .npy, total ~250 MB)
+data/processed/ctu_uhb/*.npy
+data/processed/fhrma/*.npy
+
+# Original PhysioNet binary signals (.dat/.hea — not redistributable)
+data/ctu-chb-intrapartum-cardiotocography-database-1.0.0/ctu-chb-intrapartum-cardiotocography-database-1.0.0/*.dat
+data/ctu-chb-intrapartum-cardiotocography-database-1.0.0/ctu-chb-intrapartum-cardiotocography-database-1.0.0/*.hea
+
+# CTGDL archives (large tarballs)
+data/CTGDL/*.tar.gz
+data/CTGDL/*.tar
+data/CTGDL/*.zip
+data/CTGDL/*.gz
+
+# SPAM matlab files (not publicly available)
+data/CTGDL/spam/
+
+# ─── Checkpoints (large PyTorch weights) ─────────────────────────────────────
+# Dry-run / GPU-trained model checkpoints — NOT committed (too large)
+checkpoints/pretrain/*.pt
+checkpoints/finetune/*.pt
+checkpoints/alerting/*.pkl
+checkpoints/pretrain_audit/*.pt
+checkpoints/pretrain_v36check/*.pt
+checkpoints/finetune_audit/*.pt
+checkpoints/finetune_v48check/*.pt
+# Keep directory structure via .gitkeep files
+
+# ─── Temporary / scratch files ────────────────────────────────────────────────
+_append*.py
+_tmp_*.py
+_fix_*.py
+*.tmp
+
+# ─── Secrets / credentials ────────────────────────────────────────────────────
+.env
+*.key
+*.pem
+secrets.yaml
+
+# ─── Analysis results (large output files) ────────────────────────────────────
+data/ctu-chb-intrapartum-cardiotocography-database-1.0.0/analysis_results/
+
+# ─── Results (generated at eval time) ────────────────────────────────────────
+results/
+
+# ─── What IS committed (explicit allowlist) ───────────────────────────────────
+# src/**                          ← all source code
+# config/train_config.yaml        ← hyperparameters
+# docs/**                         ← all documentation & PDF paper
+# notebooks/**                    ← all Jupyter notebooks
+# data/splits/*.csv               ← train/val/test/pretrain split files
+# data/CTGDL/CTGDL_norm_metadata.csv      ← SSOT metadata (981 rows)
+# data/CTGDL/CTGDL_FHEMA_metadata.csv
+# data/CTGDL/CTGDL_SPAM_metadata.csv
+# data/processed/ctu_uhb_clinical_full.csv ← clinical metadata (552 rows)
+# logs/*.csv                      ← training loss logs
+# .github/**                      ← agent workflow files

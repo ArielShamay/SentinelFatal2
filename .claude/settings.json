@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(du:*)",
+      "WebFetch(domain:arxiv.org)",
+      "WebFetch(domain:zenodo.org)",
+      "WebFetch(domain:users.ox.ac.uk)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:pmc.ncbi.nlm.nih.gov)",
+      "WebFetch(domain:www.oxdhl.com)",
+      "WebFetch(domain:www.wrh.ox.ac.uk)",
+      "Bash(ls:*)",
+      "Bash(file:*)",
+      "Bash(python3:*)",
+      "Bash(python:*)"
+    ]
+  }
+}
