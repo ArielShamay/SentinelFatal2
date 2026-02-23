@@ -267,6 +267,8 @@ def train(
         val_csv = project_root / "data" / "splits" / "val.csv"
     if pretrain_checkpoint is None:
         pretrain_checkpoint = project_root / "checkpoints" / "pretrain" / "best_pretrain.pt"
+    else:
+        pretrain_checkpoint = Path(pretrain_checkpoint)
 
     # Class weights (P8 fix: deviation S6.1)
     class_weights = compute_class_weights(train_csv)

@@ -1,0 +1,2 @@
+fold,n_test,n_pos,AUC,Sensitivity,Specificity,threshold
+0,5,1,1.0,1.0,0.5,0.6993413809315556
