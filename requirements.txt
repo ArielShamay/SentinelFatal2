@@ -1,0 +1,11 @@
+# SentinelFatal2 dependencies
+# torch is intentionally unpinned — Colab provides a CUDA-compatible version.
+# All other packages are pinned to the versions used during development.
+
+numpy>=1.26
+pandas>=2.0
+matplotlib>=3.8
+PyYAML>=6.0
+scikit-learn>=1.3
+scipy>=1.11
+tqdm>=4.65
