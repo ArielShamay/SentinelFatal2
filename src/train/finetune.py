@@ -320,8 +320,18 @@ def train(
     ], weight_decay=float(ftcfg["weight_decay"]))
 
     lr_backbone = optimizer.param_groups[0]['lr']
-    lr_head = optimizer.param_groups[1]['lr']
+    lr_head     = optimizer.param_groups[1]['lr']
     print(f"[finetune] optimizer: AdamW, lr_backbone={lr_backbone:.2e}, lr_head={lr_head:.2e}")
+
+    # ReduceLROnPlateau (S12): halves both param-group LRs when val_auc stalls.
+    # Outer early-stopping patience=25 is the final guard.
+    lr_min    = float(ftcfg.get("lr_min", 1e-7))
+    sched_pat = int(ftcfg.get("lr_scheduler_patience", 7))
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode="max", factor=0.5, patience=sched_pat,
+        min_lr=lr_min, verbose=False,
+    )
+    print(f"[finetune] scheduler: ReduceLROnPlateau(patience={sched_pat}, min_lr={lr_min:.0e})")
 
     # ---- Logging -------------------------------------------------------------
     init_csv_log(log_path)
@@ -345,14 +355,18 @@ def train(
         )
 
         # Validate: per-recording AUC (P7 fix)
-        # Use stride=900 during training for fast validation (same as training windows).
+        # val_stride=60 (15-sec step) gives 286 windows/recording vs 14 with stride=900,
+        # producing a much more stable AUC signal for model selection (S12 improvement).
         # stride=1 is reserved ONLY for final evaluation (Step 7 / 05_evaluation.ipynb).
-        stride_val = 900 if max_batches == 0 else 60  # 60 for dry-run speed
+        stride_val = int(ftcfg.get("val_stride", 60)) if max_batches == 0 else 60
         val_auc = compute_recording_auc(
             model, val_csv, processed_root, stride=stride_val, device=device_str
         )
 
-        elapsed = time.time() - t0
+        scheduler.step(val_auc)  # update LR based on val_auc improvement
+        lr_backbone = optimizer.param_groups[0]['lr']
+        lr_head     = optimizer.param_groups[1]['lr']
+        elapsed     = time.time() - t0
         print(
             f"[epoch {epoch:03d}] train_loss={train_loss:.6f}  "
             f"val_auc={val_auc:.6f}  lr_bb={lr_backbone:.2e}  lr_hd={lr_head:.2e}  ({elapsed:.1f}s)"

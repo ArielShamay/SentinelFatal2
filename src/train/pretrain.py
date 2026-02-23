@@ -323,9 +323,19 @@ def pretrain(
     print(f"[pretrain] model: {model}")
     print(f"[pretrain] encoder params: {model.n_encoder_params:,}")
 
-    # ---- Optimizer -----------------------------------------------------------
-    # Adam with fixed lr=1e-4 — ✓ paper Section II-D.  No scheduler — S6.
-    optimizer = torch.optim.Adam(model.parameters(), lr=float(ptcfg["lr"]))
+    # ---- Optimizer + LR Scheduler (S12 improvement) -------------------------
+    # Adam lr=1e-4 — ✓ paper II-D.
+    # ReduceLROnPlateau: halves LR whenever val_loss stalls for lr_scheduler_patience
+    # epochs. Allows model to keep descending past the initial plateau without
+    # overfitting (the outer early-stopping patience=20 is the final guard).
+    optimizer  = torch.optim.Adam(model.parameters(), lr=float(ptcfg["lr"]))
+    lr_min     = float(ptcfg.get("lr_min", 1e-6))
+    sched_pat  = int(ptcfg.get("lr_scheduler_patience", 5))
+    scheduler  = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode="min", factor=0.5, patience=sched_pat,
+        min_lr=lr_min, verbose=False,
+    )
+    print(f"[pretrain] scheduler: ReduceLROnPlateau(patience={sched_pat}, min_lr={lr_min:.0e})")
 
     # ---- Logging -------------------------------------------------------------
     init_csv_log(log_path)
@@ -353,7 +363,8 @@ def pretrain(
             max_batches=max_batches, verbose=False,
         )
 
-        lr = optimizer.param_groups[0]["lr"]
+        scheduler.step(val_loss)  # update LR based on val_loss improvement
+        lr      = optimizer.param_groups[0]["lr"]
         elapsed = time.time() - t0
         print(
             f"[epoch {epoch:03d}] train_loss={train_loss:.6f}  "

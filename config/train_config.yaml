@@ -30,8 +30,11 @@ pretrain:
   mask_value: 0.0              # zero masking — ✓ מאמר Section II-D
   optimizer: adam              # — ✓ מאמר Section II-D
   lr: 1.0e-4                   # learning rate — ✓ מאמר Section II-D
-  max_epochs: 200              # — ⚠ הנחה S5 (paper unspecified for pretrain)
-  patience: 10                 # early stopping on val reconstruction loss — ⚠ הנחה S5
+  lr_min: 1.0e-6               # ReduceLROnPlateau floor — ⚠ S12
+  lr_scheduler: reduce_on_plateau  # halve LR when val_loss stalls — ⚠ S12
+  lr_scheduler_patience: 5     # epochs without improvement → cut LR — ⚠ S12
+  max_epochs: 300              # — ⚠ S5 (was 200; scheduler handles overfitting guard)
+  patience: 20                 # early stopping on val reconstruction loss — ⚠ S5 (was 10)
   batch_size: 64               # — ⚠ הנחה S6
   window_stride: 900           # sliding window stride (50% overlap) — ⚠ הנחה S4
 
@@ -39,11 +42,15 @@ finetune:
   optimizer: adamw             # — ✓ מאמר Section II-E
   lr_backbone: 1.0e-5          # differential LR for backbone — ⚠ הנחה S6
   lr_head: 1.0e-4              # differential LR for head — ⚠ הנחה S6
+  lr_min: 1.0e-7               # ReduceLROnPlateau floor — ⚠ S12
+  lr_scheduler: reduce_on_plateau  # halve LR when val_auc stalls — ⚠ S12
+  lr_scheduler_patience: 7     # epochs without improvement → cut LR — ⚠ S12
   weight_decay: 1.0e-2         # AdamW weight decay — ⚠ הנחה S6
-  max_epochs: 100              # — ✓ מאמר Section II-E
-  patience: 15                 # early stopping on val AUC — ✓ מאמר Section II-E
+  max_epochs: 150              # — ✓ מאמר II-E (was 100; extra room for scheduler to work)
+  patience: 25                 # early stopping on val AUC — ✓ מאמר II-E (was 15)
   batch_size: 32               # small dataset (441 recordings) — ⚠ הנחה S6
   gradient_clip: 1.0           # max gradient norm — ⚠ הנחה S6
+  val_stride: 60               # dense inference stride for val AUC (286 windows/rec vs 14) — ⚠ S12
   n_classes: 2                 # binary: 0=normal 1=acidemia — ⚠ הנחה (binary per project design; paper uses binary outputs but does not name n_classes)
 
 alerting:
