@@ -40,9 +40,9 @@ desktop.ini
 # Raw extracted CSVs (~552 + 135 large files)
 data/raw/
 
-# Processed numpy arrays (~552 + 135 .npy, total ~250 MB)
-data/processed/ctu_uhb/*.npy
-data/processed/fhrma/*.npy
+# Processed numpy arrays — tracked in repo (~101 MB, safe for GitHub)
+# data/processed/ctu_uhb/*.npy  ← now tracked
+# data/processed/fhrma/*.npy    ← now tracked
 
 # Original PhysioNet binary signals (.dat/.hea — not redistributable)
 data/ctu-chb-intrapartum-cardiotocography-database-1.0.0/ctu-chb-intrapartum-cardiotocography-database-1.0.0/*.dat
