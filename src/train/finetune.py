@@ -38,7 +38,7 @@ import random
 import sys
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -284,6 +284,13 @@ def train(
     print(f"[finetune] dataset - train windows={len(train_loader.dataset)}, "
           f"val windows={len(val_loader.dataset)}")
 
+    # Preflight check: ensure dataset loaded enough data
+    if len(train_loader.dataset) < 100:
+        raise RuntimeError(
+            f"[finetune] FATAL: Only {len(train_loader.dataset)} train windows loaded "
+            f"(expected ~8,000+). Check that processed .npy files exist at {processed_root}"
+        )
+
     # ---- Model ---------------------------------------------------------------
     model = PatchTST(cfg)
     load_pretrained_checkpoint(model, pretrain_checkpoint, device)
@@ -336,8 +343,9 @@ def train(
         )
 
         # Validate: per-recording AUC (P7 fix)
-        # Use stride=1 for official evaluation (dense windows)
-        stride_val = 1 if max_batches == 0 else 60  # 60 for dry-run speed
+        # Use stride=900 during training for fast validation (same as training windows).
+        # stride=1 is reserved ONLY for final evaluation (Step 7 / 05_evaluation.ipynb).
+        stride_val = 900 if max_batches == 0 else 60  # 60 for dry-run speed
         val_auc = compute_recording_auc(
             model, val_csv, processed_root, stride=stride_val, device=device_str
         )

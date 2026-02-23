@@ -49,8 +49,9 @@ def compute_recording_auc(
     processed_dir: Union[str, Path],
     stride: int = 1,
     device: str = "cpu",
+    eval_batch_size: int = 256,
 ) -> float:
-    """Compute AUC per-recording (P7 fix).
+    """Compute AUC per-recording (P7 fix) with batched inference.
 
     Training unit = window. Evaluation unit = RECORDING.
     Aggregation function (LOCKED): max(window_scores) per recording.
@@ -59,8 +60,9 @@ def compute_recording_auc(
         model: PatchTST with ClassificationHead.
         split_csv: Path to train.csv or val.csv (cols: id, target, fname).
         processed_dir: Path to data/processed/ directory.
-        stride: Inference stride (1 for official eval, 60 for runtime demo).
+        stride: Inference stride (900 for training validation, 1 for Stage 7 eval).
         device: 'cpu' or 'cuda'.
+        eval_batch_size: Number of windows per forward pass (default 256).
 
     Returns:
         ROC-AUC score across all recordings.
@@ -97,13 +99,13 @@ def compute_recording_auc(
                 print(f"[compute_recording_auc] WARNING: no windows for {recording_id}, skipping")
                 continue
 
-            # Compute score for each window
+            # Batched inference — process windows in chunks for GPU efficiency
             scores: List[float] = []
-            for win in windows:
-                win = win.to(device).unsqueeze(0)  # (1, 2, 1800)
-                logits = model(win)  # (1, 2)
-                prob = torch.softmax(logits, dim=-1)[0, 1].item()  # P(acidemia)
-                scores.append(prob)
+            for i in range(0, len(windows), eval_batch_size):
+                batch = torch.stack(windows[i : i + eval_batch_size]).to(device)
+                logits = model(batch)
+                probs = torch.softmax(logits, dim=-1)[:, 1].tolist()
+                scores.extend(probs)
 
             # P7 fix: aggregation = max
             recording_score = max(scores)

@@ -47,18 +47,20 @@ def inference_recording(
     signal: Union[np.ndarray, torch.Tensor],
     stride: int = INFERENCE_STRIDE_REPRO,
     device: str = "cpu",
+    batch_size: int = 256,
 ) -> List[Tuple[int, float]]:
     """Run sliding-window inference on a single full-length recording.
 
     Source: arXiv:2601.06149v1, Section II-F — "sliding window" evaluation.
 
     Args:
-        model:  PatchTST with ClassificationHead (eval mode recommended).
-        signal: (2, T) array/tensor — FHR (ch0) and UC (ch1); T >= 1800.
-        stride: Sliding stride in samples.
-                Use INFERENCE_STRIDE_REPRO (1)   for official evaluation.
-                Use INFERENCE_STRIDE_RUNTIME (60) for demo/visualization only.
-        device: Torch device string ('cpu' or 'cuda').
+        model:      PatchTST with ClassificationHead (eval mode recommended).
+        signal:     (2, T) array/tensor — FHR (ch0) and UC (ch1); T >= 1800.
+        stride:     Sliding stride in samples.
+                    Use INFERENCE_STRIDE_REPRO (1)   for official evaluation.
+                    Use INFERENCE_STRIDE_RUNTIME (60) for demo/visualization only.
+        device:     Torch device string ('cpu' or 'cuda').
+        batch_size: Number of windows per forward pass (default 256).
 
     Returns:
         List of (start_sample, score) tuples where:
@@ -90,7 +92,12 @@ def inference_recording(
     signal_t = signal_t.to(device)
 
     # ------------------------------------------------------------------
-    # Sliding window loop
+    # Collect all window start positions
+    # ------------------------------------------------------------------
+    starts = list(range(0, T - _WINDOW_LEN + 1, stride))
+
+    # ------------------------------------------------------------------
+    # Batched sliding window inference
     # ------------------------------------------------------------------
     model.eval()
     model.to(device)
@@ -98,13 +105,16 @@ def inference_recording(
     scores: List[Tuple[int, float]] = []
 
     with torch.no_grad():
-        for start in range(0, T - _WINDOW_LEN + 1, stride):
-            window = signal_t[:, start : start + _WINDOW_LEN]  # (2, 1800)
-            batch = window.unsqueeze(0)                         # (1, 2, 1800)
+        for i in range(0, len(starts), batch_size):
+            batch_starts = starts[i : i + batch_size]
+            windows = torch.stack([
+                signal_t[:, s : s + _WINDOW_LEN] for s in batch_starts
+            ])  # (B, 2, 1800)
 
-            logits = model(batch)                               # (1, 2)
-            prob = logits.softmax(dim=-1)[0, 1].item()          # P(acidemia)
+            logits = model(windows)                                  # (B, 2)
+            probs = logits.softmax(dim=-1)[:, 1].tolist()           # list[float]
 
-            scores.append((start, prob))
+            for s, p in zip(batch_starts, probs):
+                scores.append((s, p))
 
     return scores

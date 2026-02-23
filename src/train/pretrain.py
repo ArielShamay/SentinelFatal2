@@ -306,6 +306,13 @@ def pretrain(
     print(f"[pretrain] dataset - train windows={len(train_loader.dataset)}, "
           f"val windows={len(val_loader.dataset)}")
 
+    # Preflight check: ensure dataset loaded enough data
+    if len(train_loader.dataset) < 100:
+        raise RuntimeError(
+            f"[pretrain] FATAL: Only {len(train_loader.dataset)} train windows loaded "
+            f"(expected ~12,000+). Check that processed .npy files exist at {processed_root}"
+        )
+
     # ---- Model ---------------------------------------------------------------
     model = PatchTST(cfg)
     model.replace_head(PretrainingHead(

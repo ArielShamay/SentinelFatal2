@@ -101,11 +101,30 @@ class PretrainDataset(Dataset):
             for start in starts:
                 self._windows.append((npy_path, start))
 
+        n_loaded = len(df) - len(missing)
         if missing:
             print(
-                f"[PretrainDataset] WARNING: {len(missing)} .npy files not found "
+                f"[PretrainDataset] WARNING: {len(missing)}/{len(df)} .npy files not found "
                 f"(skipped). First 5: {missing[:5]}"
             )
+            if len(missing) > len(df) * 0.5:
+                raise RuntimeError(
+                    f"[PretrainDataset] FATAL: {len(missing)}/{len(df)} files missing "
+                    f"(>{50}%). Check that processed .npy files exist under "
+                    f"{self.processed_root}. First missing: {missing[0]}"
+                )
+
+        if len(self._windows) == 0:
+            raise RuntimeError(
+                f"[PretrainDataset] FATAL: 0 windows created from {len(df)} recordings "
+                f"({n_loaded} loaded, {len(missing)} missing). "
+                f"Check paths and that recordings are long enough (>= {window_len} samples)."
+            )
+
+        print(
+            f"[PretrainDataset] Loaded {n_loaded}/{len(df)} recordings → "
+            f"{len(self._windows)} windows (stride={stride})"
+        )
 
     def __len__(self) -> int:
         return len(self._windows)
@@ -223,11 +242,30 @@ class FinetuneDataset(Dataset):
             for start in starts:
                 self._windows.append((npy_path, start, label))
 
+        n_loaded = len(df) - len(missing)
         if missing:
             print(
-                f"[FinetuneDataset] WARNING: {len(missing)} .npy files not found "
+                f"[FinetuneDataset] WARNING: {len(missing)}/{len(df)} .npy files not found "
                 f"(skipped). First 5: {missing[:5]}"
             )
+            if len(missing) > len(df) * 0.5:
+                raise RuntimeError(
+                    f"[FinetuneDataset] FATAL: {len(missing)}/{len(df)} files missing "
+                    f"(>{50}%). Check that processed .npy files exist under "
+                    f"{self.processed_root}/ctu_uhb/. First missing: {missing[0]}"
+                )
+
+        if len(self._windows) == 0:
+            raise RuntimeError(
+                f"[FinetuneDataset] FATAL: 0 windows created from {len(df)} recordings "
+                f"({n_loaded} loaded, {len(missing)} missing). "
+                f"Check paths and that recordings are long enough (>= {window_len} samples)."
+            )
+
+        print(
+            f"[FinetuneDataset] Loaded {n_loaded}/{len(df)} recordings → "
+            f"{len(self._windows)} windows (stride={stride})"
+        )
 
     def __len__(self) -> int:
         return len(self._windows)
