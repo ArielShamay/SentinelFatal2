@@ -329,7 +329,7 @@ def train(
     sched_pat = int(ftcfg.get("lr_scheduler_patience", 7))
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="max", factor=0.5, patience=sched_pat,
-        min_lr=lr_min, verbose=False,
+        min_lr=lr_min,
     )
     print(f"[finetune] scheduler: ReduceLROnPlateau(patience={sched_pat}, min_lr={lr_min:.0e})")
 

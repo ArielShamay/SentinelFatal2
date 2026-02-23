@@ -333,7 +333,7 @@ def pretrain(
     sched_pat  = int(ptcfg.get("lr_scheduler_patience", 5))
     scheduler  = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", factor=0.5, patience=sched_pat,
-        min_lr=lr_min, verbose=False,
+        min_lr=lr_min,
     )
     print(f"[pretrain] scheduler: ReduceLROnPlateau(patience={sched_pat}, min_lr={lr_min:.0e})")
 
