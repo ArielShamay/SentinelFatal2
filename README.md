@@ -3,7 +3,7 @@
 # SentinelFatal2 — Foundation Model לניבוי מצוקה עוברית מ-CTG
 
 <p align="center">
-  <img src="results/plots/pipeline_diagram.png" alt="Pipeline" width="900"/>
+  <img src="assets/pipeline_diagram.png" alt="Pipeline" width="900"/>
 </p>
 
 <div dir="ltr" align="left">
@@ -187,7 +187,7 @@ SentinelFatal2/
 ### שלב 1 — Pre-training (Masked Reconstruction)
 
 <p align="center">
-  <img src="results/plots/pretrain_loss.png" alt="Pre-training Loss" width="700"/>
+  <img src="assets/pretrain_loss.png" alt="Pre-training Loss" width="700"/>
 </p>
 
 **פרוטוקול:**
@@ -216,7 +216,7 @@ SentinelFatal2/
 ### שלב 2 — Fine-tuning (Fetal Acidemia Classification)
 
 <p align="center">
-  <img src="results/plots/finetune_curves.png" alt="Fine-tuning Curves" width="900"/>
+  <img src="assets/finetune_curves.png" alt="Fine-tuning Curves" width="900"/>
 </p>
 
 **פרוטוקול:**
@@ -265,13 +265,13 @@ SentinelFatal2/
 ### ביצועים על Test Set (55 הקלטות, 11 Acidemia)
 
 <p align="center">
-  <img src="results/plots/performance_comparison.png" alt="Performance Comparison" width="850"/>
+  <img src="assets/performance_comparison.png" alt="Performance Comparison" width="850"/>
 </p>
 
 #### ROC Curves
 
 <p align="center">
-  <img src="results/roc_curves.png" alt="ROC Curves" width="700"/>
+  <img src="assets/roc_curves.png" alt="ROC Curves" width="700"/>
 </p>
 
 #### Table 3 — AUC לפי תת-קבוצות
@@ -319,7 +319,7 @@ SentinelFatal2/
 ### ניתוח Threshold (Approach B)
 
 <p align="center">
-  <img src="results/threshold_analysis_stage2.png" alt="Stage2 Threshold Analysis" width="700"/>
+  <img src="assets/threshold_analysis_stage2.png" alt="Stage2 Threshold Analysis" width="700"/>
 </p>
 
 <div dir="ltr" align="left">
@@ -335,7 +335,7 @@ SentinelFatal2/
 ### Cross-Validation (Retrain + CV)
 
 <p align="center">
-  <img src="results/plots/cv_results.png" alt="CV Results" width="700"/>
+  <img src="assets/cv_results.png" alt="CV Results" width="700"/>
 </p>
 
 **5-Fold Stratified CV על 497 הקלטות train+val:**
