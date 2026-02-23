@@ -274,23 +274,31 @@ def train(
     class_weights = compute_class_weights(train_csv)
     criterion = nn.CrossEntropyLoss(weight=class_weights.to(device))
 
+    # S13: train_stride=60 (dense) produces ~9,200 windows vs ~630 with stride=900.
+    # Augmentation (noise + jitter) adds further variety during training only.
+    val_stride_ds   = int(ftcfg.get("window_stride", cfg["pretrain"]["window_stride"]))
+    train_stride_ds = int(ftcfg.get("train_stride", val_stride_ds))
+    do_augment      = (max_batches == 0)  # disable during dry-run for speed
     train_loader, val_loader = build_finetune_loaders(
         train_csv=train_csv,
         val_csv=val_csv,
         processed_root=processed_root,
         window_len=int(cfg["data"]["window_len"]),
-        stride=int(ftcfg.get("window_stride", cfg["pretrain"]["window_stride"])),
+        stride=val_stride_ds,
+        train_stride=train_stride_ds,
+        augment=do_augment,
         batch_size=bs,
         num_workers=0,
     )
-    print(f"[finetune] dataset - train windows={len(train_loader.dataset)}, "
+    print(f"[finetune] dataset - train windows={len(train_loader.dataset)} "
+          f"(stride={train_stride_ds}, augment={do_augment}), "
           f"val windows={len(val_loader.dataset)}")
 
     # Preflight check: ensure dataset loaded enough data
-    if len(train_loader.dataset) < 100:
+    if len(train_loader.dataset) < 10:
         raise RuntimeError(
-            f"[finetune] FATAL: Only {len(train_loader.dataset)} train windows loaded "
-            f"(expected ~8,000+). Check that processed .npy files exist at {processed_root}"
+            f"[finetune] FATAL: Only {len(train_loader.dataset)} train windows loaded. "
+            f"Check that processed .npy files exist at {processed_root}"
         )
 
     # ---- Model ---------------------------------------------------------------

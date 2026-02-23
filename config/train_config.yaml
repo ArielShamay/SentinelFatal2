@@ -51,6 +51,7 @@ finetune:
   batch_size: 32               # small dataset (441 recordings) — ⚠ הנחה S6
   gradient_clip: 1.0           # max gradient norm — ⚠ הנחה S6
   val_stride: 60               # dense inference stride for val AUC (286 windows/rec vs 14) — ⚠ S12
+  train_stride: 60             # dense sliding-window stride for training (parity with val, more samples) — ⚠ S13
   n_classes: 2                 # binary: 0=normal 1=acidemia — ⚠ הנחה (binary per project design; paper uses binary outputs but does not name n_classes)
 
 alerting:

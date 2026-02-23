@@ -207,6 +207,8 @@ class FinetuneDataset(Dataset):
         processed_root: Root directory containing `ctu_uhb/` subdir.
         window_len:     Samples per window (default 1800 — ✓ paper).
         stride:         Sliding stride in samples (default 900 — ⚠ S4).
+        augment:        If True, apply training augmentations (noise + time jitter).
+                        Should be False for validation/inference. — ⚠ S13
     """
 
     def __init__(
@@ -215,9 +217,11 @@ class FinetuneDataset(Dataset):
         processed_root: Union[str, Path],
         window_len: int = 1800,
         stride: int = 900,
+        augment: bool = False,
     ):
         self.window_len = window_len
         self.stride = stride
+        self.augment = augment
         self.processed_root = Path(processed_root)
 
         df = pd.read_csv(split_csv, dtype={"id": str, "target": int})
@@ -271,11 +275,31 @@ class FinetuneDataset(Dataset):
         return len(self._windows)
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
-        """Return one window as ((2, window_len) float32 tensor, label)."""
+        """Return one window as ((2, window_len) float32 tensor, label).
+
+        If self.augment=True, applies:
+          1. Random time jitter ±30 samples (different view of the recording).
+          2. Gaussian noise on FHR channel (ch 0), σ=0.02 (signal is normalised).
+        Both augmentations are stochastic and only active during training.
+        """
         npy_path, start, label = self._windows[idx]
         # mmap_mode='r' avoids loading the whole file into RAM
-        signal = np.load(npy_path, mmap_mode="r")[:, start : start + self.window_len]
-        return torch.from_numpy(signal.copy()), label  # copy() to materialise mmap slice
+        sig = np.load(npy_path, mmap_mode="r")
+
+        if self.augment:
+            # 1. Random time jitter: shift window start by ±30 samples
+            T_total = sig.shape[1]
+            jitter  = np.random.randint(-30, 31)
+            start   = int(np.clip(start + jitter, 0, T_total - self.window_len))
+
+        window = sig[:, start : start + self.window_len].copy()  # materialise mmap
+
+        if self.augment:
+            # 2. Gaussian noise on FHR channel (channel 0 = FHR)
+            window[0] = (window[0]
+                         + np.random.normal(0, 0.02, self.window_len).astype(np.float32))
+
+        return torch.from_numpy(window), label
 
     def __repr__(self) -> str:
         return (
@@ -294,6 +318,8 @@ def build_finetune_loaders(
     processed_root: Union[str, Path],
     window_len: int = 1800,
     stride: int = 900,
+    train_stride: Optional[int] = None,
+    augment: bool = False,
     batch_size: int = 32,
     num_workers: int = 0,
 ) -> Tuple[DataLoader, DataLoader]:
@@ -304,15 +330,20 @@ def build_finetune_loaders(
         val_csv:        Path to val.csv (56 CTU-UHB recordings).
         processed_root: Root of processed .npy files.
         window_len:     Window size in samples (1800).
-        stride:         Sliding stride in samples (900).
+        stride:         Sliding stride for val DataLoader (default 900).
+        train_stride:   Sliding stride for train DataLoader; falls back to stride.
+                        Set to 60 (S13) for dense windows and more samples per epoch.
+        augment:        Pass True to enable noise+jitter augmentation on train set.
         batch_size:     Batch size (32 per config — ⚠ S6).
         num_workers:    DataLoader worker processes (default 0 = main thread).
 
     Returns:
         (train_loader, val_loader)
     """
-    train_ds = FinetuneDataset(train_csv, processed_root, window_len, stride)
-    val_ds = FinetuneDataset(val_csv, processed_root, window_len, stride)
+    eff_train_stride = train_stride if train_stride is not None else stride
+    train_ds = FinetuneDataset(train_csv, processed_root, window_len, eff_train_stride,
+                               augment=augment)
+    val_ds   = FinetuneDataset(val_csv,   processed_root, window_len, stride)
 
     train_loader = DataLoader(
         train_ds, batch_size=batch_size, shuffle=True,

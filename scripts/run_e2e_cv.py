@@ -250,6 +250,7 @@ def run_fold(
     config_path: Path,
     stride: int,
     dry_run: bool,
+    skip_pretrain: bool = False,
 ) -> Optional[dict]:
     """
     Run the complete pipeline for one fold.
@@ -281,10 +282,22 @@ def run_fold(
     dry_batches = ["--max-batches", "2"] if dry_run else []
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Phase 1 — Pretrain
+    # Phase 1 — Pretrain  (or copy shared checkpoint)
     # ═══════════════════════════════════════════════════════════════════════
     if best_pretrain_ckpt.exists():
         log.info("[%s] Pretrain checkpoint found — skipping pretrain.", tag)
+    elif skip_pretrain:
+        # Use the single shared pretrain checkpoint (trained on all 687 recordings).
+        # Valid because pretrain is self-supervised — uses no labels, no leakage.
+        shared_ckpt = root / "checkpoints" / "pretrain" / "best_pretrain.pt"
+        if not shared_ckpt.exists():
+            log.error("[%s] --skip-pretrain requested but %s not found.", tag, shared_ckpt)
+            return None
+        ckpt_pretrain_dir.mkdir(parents=True, exist_ok=True)
+        import shutil
+        shutil.copy2(shared_ckpt, best_pretrain_ckpt)
+        log.info("[%s] --skip-pretrain: copied shared checkpoint %s → %s",
+                 tag, shared_ckpt, best_pretrain_ckpt)
     else:
         log.info("[%s] ── Phase 1: Pretrain ──────────────────────────────", tag)
         ok = run_subprocess([
@@ -301,6 +314,7 @@ def run_fold(
         if not best_pretrain_ckpt.exists():
             log.error("[%s] best_pretrain.pt not found after pretrain — aborting fold.", tag)
             return None
+    # (end of Phase 1 else block)
 
     # ═══════════════════════════════════════════════════════════════════════
     # Phase 2 — Fine-tune
@@ -425,9 +439,12 @@ def run_fold(
         log.error("[%s] Training set has only one class — aborting fold.", tag)
         return None
 
-    # Fit LR
+    # Fit LR — class_weight='balanced' corrects for ~3.9:1 imbalance per fold
     log.info("[%s] Fitting LogisticRegression …", tag)
-    lr = LogisticRegression(max_iter=1000, random_state=SEED)
+    lr = LogisticRegression(
+        max_iter=2000, random_state=SEED,
+        class_weight="balanced", C=0.5,
+    )
     lr.fit(X_tr, y_tr)
 
     # Youden threshold on ft_train (inner self-estimate)
@@ -749,6 +766,9 @@ def parse_args() -> argparse.Namespace:
                    help="2 batches per stage (~5 min total), verify pipeline end-to-end")
     p.add_argument("--force-folds", action="store_true",
                    help="Regenerate fold CSVs even if they already exist")
+    p.add_argument("--skip-pretrain", action="store_true",
+                   help="Use existing checkpoints/pretrain/best_pretrain.pt instead of "
+                        "retraining. Safe because pretrain is self-supervised (no label leakage).")
     return p.parse_args()
 
 
@@ -805,6 +825,7 @@ def main() -> None:
                 config_path=config_path,
                 stride=args.stride,
                 dry_run=args.dry_run,
+                skip_pretrain=args.skip_pretrain,
             )
         except Exception as exc:
             log.error("Fold %d raised an unexpected exception:\n%s",
