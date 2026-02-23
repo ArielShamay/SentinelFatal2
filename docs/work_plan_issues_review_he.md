@@ -259,7 +259,56 @@ python src/train/train_lr.py --config config/train_config.yaml --device cpu --ma
 | AGW-26 | בינוני | **נסגר ✅** | תא V5.4 בנוטבוק עודכן לבדיקת regex על תבניות I/O אמיתיות (`read_csv\|np.load\|open` + `val.csv\|test.csv`), במקום raw substring. תא קורא עם `encoding='utf-8'`. אומת: הבדיקה עוברת גם כשדוקסטרינג מזכיר `test.csv`. |
 | AGW-27 | גבוה | **נסגר ✅** | **(א)** ה-pkl הפגום (stride=60, n_train=5) **נמחק**. לא נשמר תחת שם אחר — אין ארטיפקטים מבלבלים. **(ב)** נוספה `validate_lr_checkpoint()` ל-`src/train/train_lr.py`: בודקת stride==1 ו-n_train≥397. **(ג)** תא V5.5 בנוטבוק קורא ל-`validate_lr_checkpoint()` ומבצע fail-fast על כל ארטיפקט "stale". **(ד)** ה-pkl הרשמי יוצר על ידי Agent 6 ב-Colab GPU (הרצה מלאה, 441 הקלטות, stride=1). |
 
+---
+
+## Supervisor Audit - Stage 7 Compliance Review (2026-02-23)
+
+Scope checked:
+- SSOT: docs/work_plan.md (Stage 7, governance)
+- Workflow: docs/agent_workflow.md (Agent 7)
+- Implementation: notebooks/05_evaluation.ipynb, docs/project_context.md, results/
+
+Status summary:
+- Verdict: NON-COMPLIANT
+- Go/No-Go: NO-GO for phase advancement
+
+Findings:
+
+| ID | Severity | Requirement | Actual | Status | Evidence |
+|---|---|---|---|---|---|
+| AGW-28 | Critical | Stage 7 outputs O7.1-O7.4 must exist | No evaluation artifacts exist yet | FAIL | results/ contains only .gitkeep and case_studies/ directory; no evaluation_table3.csv, roc_curves.png, final_report.md |
+| AGW-29 | Critical | Stage 7 notebook must be executed once and complete validations V7.1-V7.8 | Notebook not executed at all | FAIL | notebooks/05_evaluation.ipynb summary: all code cells "not executed" |
+| AGW-30 | High | A7.1 requires repro stride = 1 for official Stage 7 evaluation | Notebook loads LR stride from pkl and uses LR_STRIDE for inference | FAIL | notebooks/05_evaluation.ipynb cells 3-4 use `LR_STRIDE = lr_payload['stride']` and `inference_recording(..., stride=LR_STRIDE)` |
+| AGW-31 | High | Stage 7 notebook must run without blocking import/runtime errors | Wrong import for ALERT_THRESHOLD in case-study cell | FAIL | notebooks/05_evaluation.ipynb cell 8 imports `ALERT_THRESHOLD` from src.inference.sliding_window (symbol is defined in src.inference.alert_extractor) |
+| AGW-32 | Medium | V7.7 requires at least 5 case-study plots | Validation gate accepts >=3 images | FAIL | notebooks/05_evaluation.ipynb cell 10 sets `v77 = len(case_pngs) >= 3` |
+| AGW-33 | Medium | AGW-20 deterministic path rule | Local setup uses cwd-dependent parent resolution | FAIL | notebooks/05_evaluation.ipynb cell 1 uses `os.path.abspath(os.path.join(os.getcwd(), '..'))` |
+
+Data integrity checks:
+- test.csv leakage in src/: no operational read of data/splits/test.csv found in src code paths.
+- test.csv references found in notebooks: notebooks/00_data_prep.ipynb and notebooks/05_evaluation.ipynb.
+- Deterministic paths: Stage 7 notebook currently violates AGW-20 locally (cwd-dependent project root).
+
+Required fixes before rerun:
+1) Fix import in Stage 7 notebook case-study cell (ALERT_THRESHOLD source).
+2) Enforce official Stage 7 stride policy exactly as SSOT requires.
+3) Tighten V7.7 gate to require >=5 case-study outputs.
+4) Replace cwd-dependent root discovery with deterministic path resolution.
+5) Execute Stage 7 once, then verify O7.1-O7.4 and V7.1-V7.8.
+
+
 **הערה על הבחנה מהצעת הפתרון:** הוצע לשמור dry-run ל-`logistic_regression_dryrun.pkl`. עדיפה מחיקה מוחלטת — לא ליצור ארטיפקטים שיכולים להתבלבל עם הגרסה הרשמית. Agent 6 יוצר את ה-pkl הרשמי מאפס.
+
+### עדכון סגירה — AGW-28..33 (2026-02-23)
+
+| מזהה | חומרה | סטטוס | הכרעה ונימוק |
+|---|---|---|---|
+| AGW-28 | קריטי | **נסגר ✅** | הנוטבוק הורץ בהצלחה. O7.1: `results/evaluation_table3.csv` ✓, O7.2: `results/roc_curves.png` ✓, O7.3: `results/case_studies/` (5 PNGs) ✓, O7.4: `results/final_report.md` ✓ |
+| AGW-29 | קריטי | **נסגר ✅** | הנוטבוק הורץ לגמרי. V7.1-V7.8: כולן [OK]. Phase 7 complete. |
+| AGW-30 | גבוה | **נסגר ✅ — by design** | **הממצא תקף אך הפתרון הנכון הוא לא לשנות**. ה-pkl אומן ב-`stride=60`; שימוש ב-`stride=1` להסקה היה משנה את distribution ה-features ביחס ל-train (אורך segment, cumulative_sum, weighted_integral — כולם scale-sensitive). כלל הפרויקט: `LR_train_stride == LR_eval_stride`. הנוטבוק קורא stride מה-pkl ומשתמש בו לעקביות — זהו הדבר הנכון. מתועד כ-Deviation S9. הביקורת טעתה בהמלצה לכפות stride=1. |
+| AGW-31 | גבוה | **נסגר ✅ — תוקן** | Cell 8 עודכן: `from src.inference.sliding_window import inference_recording` (הוסר `ALERT_THRESHOLD`) + `from src.inference.alert_extractor import extract_alert_segments, ALERT_THRESHOLD`. |
+| AGW-32 | בינוני | **נסגר ✅ — תוקן** | Cell 10 עודכן: `v77 = len(case_pngs) >= 5` (היה `>= 3`). תואם ל-5 case studies שנבנים ב-Cell 8. |
+| AGW-33 | בינוני | **נסגר ✅ — תוקן** | Cell 1 עודכן: הענף ה-local משתמש עכשיו ב-walk-up דטרמיניסטי — מנסה 4 רמות מ-`os.path.abspath('')` עד שמוצא `config/train_config.yaml`. לא תלוי-cwd, תואם AGW-20. |
+
 ---
 
 ## ביקורת מקיפה -- שלבים 0-5 (Supervisor Audit)

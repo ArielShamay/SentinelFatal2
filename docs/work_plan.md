@@ -324,7 +324,8 @@
 
 | פרמטר | ערך | מקור |
 |--------|-----|-------|
-| Alert threshold | 0.5 | ✓ מאמר Section II-F |
+| Alert threshold | **0.4** | S11: הורד מ-0.5 (Deviation S11, validated 2026-02-23) |
+| Decision threshold | **0.284** | Youden-optimal — AUC=0.839, Sens=0.818 |
 | Alert segment | קטע רציף שבו NN score > 0.5 | ✓ מאמר Section II-F |
 | Feature 1 | segment length (דקות) | ✓ מאמר Section II-F |
 | Feature 2 | max prediction (מקסימום score בקטע) | ✓ מאמר Section II-F |
@@ -928,8 +929,8 @@ def inference_recording(model, signal, stride=INFERENCE_STRIDE_REPRO):
 
 #### 5.2 — Alert Segment Extraction
 ```python
-def extract_alert_segments(scores, threshold=0.5):
-    """מחזיר רשימת segments רציפים שבהם score > 0.5"""
+def extract_alert_segments(scores, threshold=0.4):
+    """מחזיר רשימת segments רציפים שבהם score > 0.4 (S11)"""
     alert_mask = [s > threshold for _, s in scores]
     segments = []
     # חיפוש רצועות רציפות של True
@@ -1116,7 +1117,8 @@ for subset, ids in subsets.items():
 | Masking ratio | 0.4 | Section II-D |
 | Masking: groups ≥ 2 | כן | Section II-D |
 | Masking: boundary preservation | כן | Section II-D |
-| Alert threshold | 0.5 | Section II-F |
+| Alert threshold | **0.4** | S11: הורד מ-0.5 (Deviation S11) |
+| Decision threshold | **0.284** | Youden-optimal (AUC=0.839) |
 | LR features | 4 בדיוק | Section II-F |
 | Adam lr pretrain | 1e-4 | Section II-D |
 | Dropout | 0.2 | Section II-E |

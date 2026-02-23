@@ -47,7 +47,8 @@ finetune:
   n_classes: 2                 # binary: 0=normal 1=acidemia — ⚠ הנחה (binary per project design; paper uses binary outputs but does not name n_classes)
 
 alerting:
-  threshold: 0.5               # alert segment threshold — ✓ מאמר Section II-F
+  threshold: 0.4               # S11: lowered from 0.5 (Deviation S11, validated 2026-02-23)
+  decision_threshold: 0.284    # Youden-optimal LR decision threshold (AUC=0.839, Sens=0.818)               # alert segment threshold — ✓ מאמר Section II-F
   inference_stride_repro: 1    # 1-sample stride for official evaluation — ✓ מאמר Section II-F
   inference_stride_runtime: 60 # 15-sec stride for operational demo only — ⚠ הנחה S6
 

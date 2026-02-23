@@ -122,7 +122,7 @@ class PretrainDataset(Dataset):
             )
 
         print(
-            f"[PretrainDataset] Loaded {n_loaded}/{len(df)} recordings → "
+            f"[PretrainDataset] Loaded {n_loaded}/{len(df)} recordings -> "
             f"{len(self._windows)} windows (stride={stride})"
         )
 
@@ -263,7 +263,7 @@ class FinetuneDataset(Dataset):
             )
 
         print(
-            f"[FinetuneDataset] Loaded {n_loaded}/{len(df)} recordings → "
+            f"[FinetuneDataset] Loaded {n_loaded}/{len(df)} recordings -> "
             f"{len(self._windows)} windows (stride={stride})"
         )
 

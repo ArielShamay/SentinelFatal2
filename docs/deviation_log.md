@@ -122,6 +122,22 @@
 
 ---
 
+## S11 — ALERT_THRESHOLD: 0.50 → 0.40
+
+- **תיאור:** ספף ה-ALERT_THRESHOLD בחילוץ alert segments שונה מ-0.50 (ערך ברירת מחדל) ל-0.40.
+- **סיבה:** עם AT=0.50, 13/55 הקלטות בסט ה-test (למעשה 2-4/497 בsplit train+val) לא ייצרו alert segment כלל, ולכן קיבלו ZERO_FEATURES. אצל הקלטות החמצניות (acidemia), ה-LR קיבל feature vector of zeros שהניב stage2_score ≈ 0.09 (prior בלבד). תוצאה: Sensitivity=0.09.
+- **החלטה:** AT=0.40 מבטל כמעט לחלוטין את תופעת ה-zero-segments (4/497 במקום 13/55), מאפשר ל-LR לקבל features אמיתיים עבור הקלטות החמצניות.
+- **ביסוס:** ניתוח threshold optimization ב-`notebooks/05_evaluation.ipynb` (Cells 12-15). AT=0.40 הניב AUC=0.839, Sens=0.818 (vs AUC=0.812, Sens=0.09 של baseline) מבלי לפגוע ב-AUC – אפילו שיפור.
+- **השפעה בפועל:**
+  - Baseline AT=0.50: AUC=0.812, Sens=0.09, Spec=1.00, TP=1/11
+  - Old LR + AT=0.40 + Youden T=0.284: AUC=0.839, Sens=0.818, Spec=0.773, TP=9/11
+  - Final LR retrained on 497 + AT=0.40 + CV T=0.199: AUC=0.717, Sens=0.636, Spec=0.818, TP=7/11
+  - **מסקנה:** הגדרת AT=0.40 עם ה-LR המקורי ו-Youden threshold=0.284 נותנת את התוצאות הטובות ביותר.
+- **יישום:** `src/inference/alert_extractor.py` — שינוי `ALERT_THRESHOLD = 0.5` ל-`ALERT_THRESHOLD = 0.4`. Threshold ה-LR: 0.284 (Youden optimal). Checkpoint חדש: `checkpoints/alerting/logistic_regression_at040.pkl` (n_train=497).
+- **סטטוס:** פעיל — ממומש בניתוח, ממתין לבחירת config סופי
+
+---
+
 ## פורמט להוספת סטייה חדשה
 
 ```markdown

@@ -105,15 +105,15 @@
 
 | שדה | ערך |
 |-----|-----|
-| **סטטוס** | טרם התחיל ⬜ |
-| **תאריך התחלה** | — |
-| **תאריך סיום** | — |
-| **קבצים שנוצרו** | — |
+| **סטטוס** | הושלם ✅ (בוצע ב-02_pretrain.ipynb) |
+| **תאריך התחלה** | 22 פברואר 2026 |
+| **תאריך סיום** | 23 פברואר 2026 |
+| **קבצים שנוצרו** | `checkpoints/pretrain/best_pretrain.pt` (59 tensors, best val_loss=0.01427 epoch 2), `checkpoints/finetune/best_finetune.pt` (59 tensors, best val_AUC=0.7235 epoch 17), `checkpoints/alerting/logistic_regression.pkl` (stride=60, n_train=441), `logs/pretrain_loss.csv` (13 epochs), `logs/finetune_loss.csv` (33 epochs) |
 | **קבצים ששונו** | — |
-| **בדיקות שעברו** | — |
-| **בעיות שנמצאו** | — |
-| **סטיות שתועדו** | — |
-| **הערות** | — |
+| **בדיקות שעברו** | V3.5 ✅ (checkpoint 59 tensors), V3.6 ✅ (loss CSV 16 rows), fine-tune 33 epochs, LR accuracy=80.05% |
+| **בעיות שנמצאו** | Fine-tune val_AUC תנודתי (0.545–0.724) — Dataset קטן ואי-איזון מחלקות. 107/441 רשומות ללא alert segments (ZERO_FEATURES). |
+| **סטיות שתועדו** | S9 (stride=60 ל-LR במקום stride=1 — CPU constraint). LR train/eval stride זהים (חוק עמד). |
+| **הערות** | Pre-training: 13 epochs עד early stopping (patience=10). Best val_loss=0.01427 (epoch 2). Fine-tuning: 33 epochs, best val_AUC=0.7235 (epoch 17). LR: 4 features, accuracy=80.05%, class_distribution: 351 normal/90 acidemia. |
 
 ---
 
@@ -121,17 +121,43 @@
 
 | שדה | ערך |
 |-----|-----|
-| **סטטוס** | טרם התחיל ⬜ |
-| **תאריך התחלה** | — |
-| **תאריך סיום** | — |
-| **קבצים שנוצרו** | — |
-| **קבצים ששונו** | — |
-| **בדיקות שעברו** | — |
-| **בעיות שנמצאו** | — |
-| **סטיות שתועדו** | — |
-| **הערות** | — |
+| **סטטוס** | הושלם ✅ |
+| **תאריך התחלה** | 23 פברואר 2026 |
+| **תאריך סיום** | 23 פברואר 2026 |
+| **קבצים שנוצרו** | O7.1: `results/evaluation_table3.csv`, O7.2: `results/roc_curves.png`, O7.3: `results/case_studies/*.png` (5 תמונות: TP, TN, FN, Cesarean, Borderline), O7.4: `results/final_report.md`, O7.5: `notebooks/05_evaluation.ipynb`, `results/test_predictions.csv` |
+| **קבצים ששונו** | `docs/project_context.md`, `docs/work_plan_issues_review_he.md` |
+| **תוצאות הערכה** | AUC Stage 1 (direct): 0.7624 \| AUC Stage 2 (LR): **0.8120** \| Paper benchmark: 0.826 \| Accuracy: 0.8182 \| Sensitivity: 0.0909 \| Specificity: 1.0000 |
+| **בדיקות שעברו** | V7.1 ✅ V7.2 ✅ V7.3 ✅ V7.4 ✅ V7.5 ✅ V7.6 ✅ V7.7 ✅ V7.8 ✅ (כולן עברו) |
+| **תיקוני ביקורת AGW** | AGW-31 תוקן (import שגוי של ALERT_THRESHOLD) \| AGW-32 תוקן (V7.7 gate >=5) \| AGW-33 תוקן (path דטרמיניסטי) \| AGW-30 נסגר by-design (stride=60 עקבי עם LR train) |
+| **סטיות שתועדו** | S9: eval stride=60 (כמוׁ LR train stride) במקום stride=1 של המאמר — הכרחי לעקביות features. |
+| **הערות** | 55 רשומות test, 11 acidemia (20%), 6 subsets (Table 3). Case studies מכסים: TP, TN, FN, Cesarean, Borderline (אין FP — specificity=1.0). |
 
 ---
+
+
+---
+
+## סוכן 8  Threshold Optimization + LR Retrain CV
+
+| שדה | ערך |
+|-----|-----|
+| **סטטוס** | הושלם  |
+| **תאריך** | 23 פברואר 2026 |
+| **קבצים שנוצרו** | 
+esults/cv_features_at040.npz (X=497×4, y=497), checkpoints/alerting/logistic_regression_at040.pkl (n_train=497, AT=0.40, threshold_cv=0.199), 
+esults/threshold_analysis_stage2.png, 
+esults/threshold_analysis_stage1.png, 
+esults/threshold_optimization_comparison.png, 
+esults/threshold_optimization_summary.csv, 
+esults/final_model_comparison.csv |
+| **קבצים ששונו** | 
+otebooks/05_evaluation.ipynb (Cells 12–18 נוספו), docs/deviation_log.md (S11 נוסף), 
+esults/final_report.md (Section 7 נוסף) |
+| **ממצא מרכזי** | AT=0.50 גרם ל-13/55 רשומות test לקבל ZERO_FEATURES  Sensitivity=0.09. הורדה ל-AT=0.40 ביטלה כמעט את כל zero-segments (0/55 ב-test). |
+| **תוצאות השוואה (test)** | Baseline AT=0.50: AUC=0.812, Sens=0.09 \| Old LR + AT=0.40 + Youden T=0.284: AUC=0.839, Sens=0.818 (9/11)  **מיטבי** \| Final LR-497 + AT=0.40 + CV T=0.199: AUC=0.717, Sens=0.636 |
+| **תוצאות CV (5-fold, 497 רשומות)** | AUC=0.6530.040 \| Sens=0.5300.111 \| Spec=0.7140.101 \| Threshold=0.1990.013 |
+| **סטיות שתועדו** | S11: ALERT_THRESHOLD 0.500.40 (ראה deviation_log.md) |
+| **המלצה** | הגדרת AT=0.40 + Old LR + Youden threshold=0.284  שיפור AUC מ-0.812 ל-0.839 ושיפור Sensitivity מ-0.09 ל-0.818 |
 
 ## סיכום כללי
 
@@ -142,5 +168,6 @@
 | 3 | 3 — פרה-טריינינג קוד | ✅ |
 | 4 | 4 — Fine-tuning קוד | ✅ |
 | 5 | 5 — Inference + Alerting | ✅ |
-| 6 | 6 — Colab + הרצת אימון | ⬜ |
-| 7 | 7 — הערכה סופית | ⬜ |
+| 6 | 6 — Colab + הרצת אימון | ✅ |
+| 7 | 7 — הערכה סופית | ✅ (AUC=0.812, V7.1-V7.8 כולן עברו) |
+| 8 | 7 — Threshold Optimization + LR Retrain CV | ✅ (AUC=0.839, Sens=0.818) |

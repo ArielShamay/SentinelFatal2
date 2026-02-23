@@ -12,7 +12,20 @@
       "Bash(ls:*)",
       "Bash(file:*)",
       "Bash(python3:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(git -C /c/Users/ariel/Desktop/SentinelFatal2 diff --name-only HEAD -- src/)",
+      "Bash(git -C /c/Users/ariel/Desktop/SentinelFatal2 diff HEAD -- src/train/pretrain.py src/train/finetune.py src/train/utils.py)",
+      "Bash(git -C /c/Users/ariel/Desktop/SentinelFatal2 diff HEAD -- src/inference/sliding_window.py)",
+      "Bash(git restore:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(gh release create:*)",
+      "Bash(gh release view:*)",
+      "Bash(curl:*)",
+      "Bash(gh repo view:*)",
+      "Bash(gh repo edit:*)",
+      "Bash(PYTHONIOENCODING=utf-8 python:*)"
     ]
   }
 }

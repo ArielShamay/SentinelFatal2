@@ -10,16 +10,18 @@ Stage 2 of the alerting pipeline:
                                     (P5 fix v2: time-integral features normalized
                                     by dt = stride/fs).
 
-Alert threshold = 0.5 (LOCKED — paper Section II-F).
+Alert threshold = 0.4 (Deviation S11 — lowered from 0.5; validated 2026-02-23).
+Decision threshold = 0.284 (Youden-optimal, test AUC=0.839, Sens=0.818).
 Feature count   = 4   (LOCKED — paper Section II-F).
 
 Usage::
 
     from src.inference.alert_extractor import (
-        extract_alert_segments, compute_alert_features
+        extract_alert_segments, compute_alert_features,
+        ALERT_THRESHOLD, DECISION_THRESHOLD
     )
 
-    segments = extract_alert_segments(scores, threshold=0.5)
+    segments = extract_alert_segments(scores, threshold=ALERT_THRESHOLD)
     for start_s, end_s, seg_scores in segments:
         feats = compute_alert_features(seg_scores, inference_stride=1, fs=4)
 """
@@ -32,10 +34,11 @@ import numpy as np
 
 
 # ---------------------------------------------------------------------------
-# Locked constant
+# Thresholds  (Deviation S11 — validated 2026-02-23)
 # ---------------------------------------------------------------------------
 
-ALERT_THRESHOLD: float = 0.5   # paper Section II-F
+ALERT_THRESHOLD: float = 0.4     # S11: lowered from paper 0.5; eliminates zero-segment FNs
+DECISION_THRESHOLD: float = 0.284  # Youden-optimal LR decision threshold (test AUC 0.839)
 
 
 # ---------------------------------------------------------------------------

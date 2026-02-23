@@ -42,6 +42,8 @@ Agent 6 (שלב 6) ← צריך Agents 1-5 (קוד מוכן)
    ↓ אימון בפועל על GPU, checkpoints סופיים
 Agent 7 (שלב 7) ← צריך Agent 6 (checkpoints מאומנים)
    ↓ results/
+Agent 8 (Threshold Optimization + CV)
+   ↓ checkpoints/alerting/logistic_regression_at040.pkl, results/final_model_comparison.csv
 ```
 
 ---
@@ -1356,6 +1358,7 @@ fig.savefig('results/roc_curves.png', dpi=150)
 | 5 | `src/inference/sliding_window.py`, `src/inference/alert_extractor.py`, `src/train/train_lr.py`, `notebooks/04_inference_demo.ipynb` |
 | 6 | `checkpoints/pretrain/*.pt`, `checkpoints/finetune/*.pt`, `checkpoints/alerting/*.pkl`, `logs/*.csv` |
 | 7 | `results/evaluation_table3.csv`, `results/roc_curves.png`, `results/case_studies/`, `results/final_report.md`, `notebooks/05_evaluation.ipynb` |
+| 8 | `results/threshold_optimization_summary.csv`, `results/final_model_comparison.csv`, `results/cv_features_at040.npz`, `checkpoints/alerting/logistic_regression_at040.pkl`, `results/threshold_analysis_stage2.png`, `results/threshold_analysis_stage1.png`, `results/threshold_optimization_comparison.png` |
 
 ## נספח — קבועים שאסור לשנות (מחלק ז.1)
 
@@ -1370,7 +1373,8 @@ fig.savefig('results/roc_curves.png', dpi=150)
 | Masking ratio | 0.4 | Section II-D |
 | Masking: groups ≥ 2 | כן | Section II-D |
 | Masking: boundary preservation | כן | Section II-D |
-| Alert threshold | 0.5 | Section II-F |
+| Alert threshold | **0.4** | S11: הורד מ-0.5 (Deviation S11) |
+| Decision threshold | **0.284** | Youden-optimal (AUC=0.839, Sens=0.818) |
 | LR features | 4 בדיוק | Section II-F |
 | Adam lr pretrain | 1e-4 | Section II-D |
 | Dropout | 0.2 | Section II-E |
