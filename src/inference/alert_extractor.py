@@ -165,10 +165,13 @@ ZERO_FEATURES: Dict[str, float] = {
     "max_prediction":    0.0,
     "cumulative_sum":    0.0,
     "weighted_integral": 0.0,
+    "n_alert_segments":  0.0,
+    "alert_fraction":    0.0,
 }
 """Zero-value feature vector for recordings that produce no alert segments.
 
 Assumption (logged as S10 in deviation_log.md):
     Recordings with zero alert windows are assigned ZERO_FEATURES, representing
     complete absence of alert activity.  Paper does not address this case explicitly.
+S14: Added n_alert_segments and alert_fraction (record-level features).
 """

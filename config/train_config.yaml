@@ -40,8 +40,9 @@ pretrain:
 
 finetune:
   optimizer: adamw             # — ✓ מאמר Section II-E
-  lr_backbone: 1.0e-5          # differential LR for backbone — ⚠ הנחה S6
+  lr_backbone: 5.0e-5          # differential LR for backbone — ⚠ S14 (was 1e-5; backbone nearly frozen)
   lr_head: 1.0e-4              # differential LR for head — ⚠ הנחה S6
+  lr_warmup_epochs: 5          # linear warmup epochs (0→target LR) — ⚠ S14 (protect pretrained weights)
   lr_min: 1.0e-7               # ReduceLROnPlateau floor — ⚠ S12
   lr_scheduler: reduce_on_plateau  # halve LR when val_auc stalls — ⚠ S12
   lr_scheduler_patience: 7     # epochs without improvement → cut LR — ⚠ S12

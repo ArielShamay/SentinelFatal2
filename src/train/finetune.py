@@ -194,7 +194,7 @@ def init_csv_log(log_path: Union[str, Path]) -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with open(log_path, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["epoch", "train_loss", "val_auc", "lr_backbone", "lr_head"])
+        writer.writerow(["epoch", "train_loss", "val_auc", "smooth_auc", "lr_backbone", "lr_head"])
 
 
 def append_csv_log(
@@ -202,6 +202,7 @@ def append_csv_log(
     epoch: int,
     train_loss: float,
     val_auc: float,
+    smooth_auc: float,
     lr_backbone: float,
     lr_head: float,
 ) -> None:
@@ -210,7 +211,7 @@ def append_csv_log(
     with open(log_path, "a", newline="") as f:
         writer = csv.writer(f)
         writer.writerow([epoch, f"{train_loss:.6f}", f"{val_auc:.6f}",
-                        f"{lr_backbone:.2e}", f"{lr_head:.2e}"])
+                        f"{smooth_auc:.6f}", f"{lr_backbone:.2e}", f"{lr_head:.2e}"])
 
 
 # ---------------------------------------------------------------------------
@@ -341,20 +342,36 @@ def train(
     )
     print(f"[finetune] scheduler: ReduceLROnPlateau(patience={sched_pat}, min_lr={lr_min:.0e})")
 
+    # ---- Warmup config (S14) -------------------------------------------------
+    warmup_epochs = int(ftcfg.get("lr_warmup_epochs", 0))
+    # Store initial target LRs for warmup ramp
+    target_lr_backbone = float(ftcfg["lr_backbone"])
+    target_lr_head     = float(ftcfg["lr_head"])
+
     # ---- Logging -------------------------------------------------------------
     init_csv_log(log_path)
 
     # ---- Training loop -------------------------------------------------------
     max_epochs    = int(ftcfg["max_epochs"])
     patience      = int(ftcfg["patience"])
+    best_smooth_auc = 0.0
     best_val_auc  = 0.0
+    smooth_auc    = 0.0           # EMA of val_auc (S14)
+    ema_beta      = 0.8           # S14: gentle smoothing (0.8 = 20% weight to current epoch)
     patience_ctr  = 0
     verbose       = not quiet
 
-    print(f"[finetune] Starting training: max_epochs={max_epochs}, patience={patience}")
+    print(f"[finetune] Starting training: max_epochs={max_epochs}, patience={patience}, "
+          f"warmup={warmup_epochs} epochs, EMA beta={ema_beta}")
 
     for epoch in range(max_epochs):
         t0 = time.time()
+
+        # ---- Warmup: linear ramp LR from 0 → target (S14) -------------------
+        if warmup_epochs > 0 and epoch < warmup_epochs:
+            frac = (epoch + 1) / warmup_epochs
+            optimizer.param_groups[0]['lr'] = target_lr_backbone * frac
+            optimizer.param_groups[1]['lr'] = target_lr_head * frac
 
         train_loss = run_epoch(
             model, train_loader, optimizer, criterion, device,
@@ -371,25 +388,37 @@ def train(
             model, val_csv, processed_root, stride=stride_val, device=device_str
         )
 
-        scheduler.step(val_auc)  # update LR based on val_auc improvement
+        # EMA smoothing of val_auc (S14: reduces noisy early-stopping)
+        if epoch == 0:
+            smooth_auc = val_auc
+        else:
+            smooth_auc = ema_beta * smooth_auc + (1 - ema_beta) * val_auc
+
+        # Scheduler: skip during warmup, step on smooth_auc after warmup (S14)
+        if epoch >= warmup_epochs:
+            scheduler.step(smooth_auc)
+
         lr_backbone = optimizer.param_groups[0]['lr']
         lr_head     = optimizer.param_groups[1]['lr']
         elapsed     = time.time() - t0
+        warmup_tag  = " [warmup]" if warmup_epochs > 0 and epoch < warmup_epochs else ""
         print(
             f"[epoch {epoch:03d}] train_loss={train_loss:.6f}  "
-            f"val_auc={val_auc:.6f}  lr_bb={lr_backbone:.2e}  lr_hd={lr_head:.2e}  ({elapsed:.1f}s)"
+            f"val_auc={val_auc:.6f}  smooth_auc={smooth_auc:.6f}  "
+            f"lr_bb={lr_backbone:.2e}  lr_hd={lr_head:.2e}  ({elapsed:.1f}s){warmup_tag}"
         )
-        append_csv_log(log_path, epoch, train_loss, val_auc, lr_backbone, lr_head)
+        append_csv_log(log_path, epoch, train_loss, val_auc, smooth_auc, lr_backbone, lr_head)
 
         # Checkpoint every epoch
         save_checkpoint(model, Path(checkpoint_dir) / f"epoch_{epoch:03d}.pt")
 
-        # Best model + early stopping
-        if val_auc > best_val_auc:
-            best_val_auc = val_auc
+        # Best model + early stopping (based on smooth_auc — S14)
+        if smooth_auc > best_smooth_auc:
+            best_smooth_auc = smooth_auc
+            best_val_auc = max(best_val_auc, val_auc)
             patience_ctr = 0
             save_checkpoint(model, Path(checkpoint_dir) / "best_finetune.pt")
-            print(f"  [OK] New best val_auc={best_val_auc:.6f} - saved best_finetune.pt")
+            print(f"  [OK] New best smooth_auc={best_smooth_auc:.6f} (raw={val_auc:.6f}) - saved best_finetune.pt")
         else:
             patience_ctr += 1
             print(f"  No improvement ({patience_ctr}/{patience})")
@@ -403,7 +432,7 @@ def train(
             print("[finetune] Dry-run complete - stopping after 1 epoch.")
             break
 
-    print(f"[finetune] Finished. Best val_auc={best_val_auc:.6f}")
+    print(f"[finetune] Finished. Best smooth_auc={best_smooth_auc:.6f} (best raw val_auc={best_val_auc:.6f})")
     print(f"[finetune] Checkpoints: {checkpoint_dir}/")
     print(f"[finetune] Loss log:     {log_path}")
 

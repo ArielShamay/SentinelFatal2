@@ -92,7 +92,8 @@ if str(ROOT) not in sys.path:
 ALERT_THRESHOLD    = 0.40   # locked — same as all other notebooks
 DECISION_THRESHOLD = 0.284  # Youden-optimal on original test set
 FEATURE_NAMES      = ["segment_length", "max_prediction",
-                      "cumulative_sum", "weighted_integral"]
+                      "cumulative_sum", "weighted_integral",
+                      "n_alert_segments", "alert_fraction"]
 N_BOOTSTRAP        = 5_000
 SEED               = 42
 
@@ -357,6 +358,8 @@ def run_fold(
     )
     from src.train.train_lr import load_finetuned_model, build_feature_matrix
     from sklearn.linear_model import LogisticRegression
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import StandardScaler
     from sklearn.metrics import roc_auc_score, roc_curve
 
     with open(config_path, encoding="utf-8") as fh:
@@ -408,7 +411,12 @@ def run_fold(
                         fs=cfg["data"]["fs"],
                     )
                 else:
-                    feats = ZERO_FEATURES
+                    feats = dict(ZERO_FEATURES)  # copy to avoid mutating
+                # S14 Addition 1: record-level features (across ALL segments)
+                n_total_windows = len(scores) if scores else 1
+                n_alert_windows = sum(len(s[2]) for s in segments)
+                feats["n_alert_segments"] = float(len(segments))
+                feats["alert_fraction"]   = float(n_alert_windows / n_total_windows)
                 X_rows.append([feats[k] for k in FEATURE_NAMES])
                 y_rows.append(label)
                 id_rows.append(rec_id)
@@ -439,12 +447,15 @@ def run_fold(
         log.error("[%s] Training set has only one class — aborting fold.", tag)
         return None
 
-    # Fit LR — class_weight='balanced' corrects for ~3.9:1 imbalance per fold
-    log.info("[%s] Fitting LogisticRegression …", tag)
-    lr = LogisticRegression(
-        max_iter=2000, random_state=SEED,
-        class_weight="balanced", C=0.5,
-    )
+    # Fit LR — StandardScaler + C=0.1 (S14: feature scale mismatch fix)
+    log.info("[%s] Fitting StandardScaler + LogisticRegression(C=0.1) …", tag)
+    lr = Pipeline([
+        ("scaler", StandardScaler()),
+        ("lr", LogisticRegression(
+            max_iter=2000, random_state=SEED,
+            class_weight="balanced", C=0.1,
+        )),
+    ])
     lr.fit(X_tr, y_tr)
 
     # Youden threshold on ft_train (inner self-estimate)
