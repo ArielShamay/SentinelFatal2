@@ -1,0 +1,2 @@
+epoch,train_loss,val_auc,lr_backbone,lr_head
+0,0.757882,0.543124,1.00e-05,1.00e-04
