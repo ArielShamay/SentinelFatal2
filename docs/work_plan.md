@@ -1210,6 +1210,113 @@ SentinelFatal2/
 
 ---
 
+## חלק ט — יומן הרצות (Run Log)
+
+> מדור זה מתעד הרצות E2E CV שבוצעו, כולל כשלים ותוצאות ביניים. מעודכן ידנית לאחר כל ניסיון.
+
+---
+
+### הרצה #1 — S14 + S15 — 23–24 פברואר 2026 ❌ נכשלה באמצע
+
+**סטטוס:** ❌ **נכשלה — Colab T4 session פג תוקפו במהלך הלילה (fold 0 בלבד הושלם)**
+
+#### רקע ושיפורים שהוכנסו
+
+**S14 (commit `b50c831`)** — שיפורי pipeline:
+- EMA (Exponential Moving Average) beta=0.8 לאמידת מודל
+- Warmup 5 epochs לפני early stopping
+- Differential LR: backbone=5e-5, head=1e-4
+- StandardScaler + LogisticRegression(C=0.1)
+- 6 features (4 מהמאמר + 2 context features: `n_alert_windows`, `total_signal_length`)
+- Stride=24 (במקום stride=60) לחילוץ features
+- תוצאות E2E CV קודמות (לפני S14): **AUC = 0.565** (5 folds)
+
+**S15 (commit `0e48ab6`)** — תיקון root cause:
+- **root cause שזוהה:** `--skip-pretrain` העתיק checkpoint ישן (13 epochs בלבד, ללא LR scheduler, best val_loss=0.01427 ב-epoch 2, lr=1e-4 קבוע לאורך כל AIM) במקום לאמן fresh
+- **תיקון:** הוספת Cell 6 (standalone fresh pretrain) ל-`notebooks/07_colab_e2e_cv_launch.ipynb`
+- Fresh pretrain config: ReduceLROnPlateau(patience=5, factor=0.5), max_epochs=300, patience=20, all 687 recordings
+
+#### מה רץ בפועל
+
+| שלב | סטטוס | פרטים |
+|-----|--------|--------|
+| Cell 1 — GPU check | ✅ | T4 GPU, 15.6 GB VRAM, CUDA 12.8 |
+| Cell 2 — git pull | ✅ | pulled `b50c831..0e48ab6` |
+| Cell 3 — data setup | ✅ | 552+135 npy files, best_pretrain.pt ✅ |
+| Cell 4 — install deps | ✅ | כל packages הותקנו |
+| Cell 5 — dry-run | ✅ | PASSED (~25 שניות, 2 folds) |
+| Cell 6 — **Fresh Pretrain** | ✅ | **הושלם** ~3.7 דקות (221,719ms), 1.7 MB ckpt |
+| Cell 7 — **5-fold CV** | ❌ | **כשל** — רץ ~5-6 שעות, fold 0 בלבד הושלם, session פג |
+| Cell 8 — morning check | ❌ | לא הורץ כלל |
+
+#### תוצאות ביניים שנשמרו
+
+**Fresh Pretrain (Cell 6) — epoch 0 בלבד לפני reset:**
+
+| epoch | train_loss | val_loss | lr |
+|-------|-----------|----------|----|
+| 0 | 0.707 | 0.307 | 1e-4 |
+
+*(הפרה-טריינינג ה-standalone רץ 3.7 דקות — סיים יותר epochs, אבל הלוג המקומי שרד epoch 0 בלבד)*
+
+**Fold 0 Fine-tuning — epoch 0 בלבד לפני reset:**
+
+| epoch | train_loss | val_auc | lr_backbone | lr_head |
+|-------|-----------|---------|-------------|---------|
+| 0 | 0.758 | 0.543 | 1e-5 | 1e-4 |
+
+**Fold 0 LR result (⚠ לא אמין):**
+
+| fold | n_test | n_pos | AUC | Sensitivity | Specificity | threshold |
+|------|--------|-------|-----|-------------|-------------|-----------|
+| 0 | 5 | **1** | 1.0 | 1.0 | 0.5 | 0.699 |
+
+> ⚠ **אזהרה:** AUC=1.0 אינו ניתן לפרשנות — test set של fold 0 הכיל **1 positive בלבד מתוך 5 הקלטות**. עם n_pos=1, כל סדרוּת מקרית תניב AUC=1.0 או 0.0. תוצאה זו **חסרת משמעות סטטיסטית**.
+
+**OOF scores שנשמרו:**
+
+| id | label | oof_score | fold_threshold |
+|----|-------|-----------|----------------|
+| 1001 | 1 | **0.952** | 0.699 |
+| 1006 | 0 | 0.768 | 0.699 |
+| 1007 | 0 | 0.866 | 0.699 |
+| 1008 | 0 | 0.209 | 0.699 |
+| 1010 | 0 | 0.295 | 0.699 |
+
+*(הביצוע ל-case 1001 acidemia נראה טוב — score 0.952 vs threshold 0.699, אבל n=5 לא מאפשר מסקנות)*
+
+#### סיבת הכשל
+
+ה-Colab T4 runtime פג אוטומטית לאחר ~12 שעות (idle timeout / session limit של Colab Free/Pro). Cell 7 רץ מ-`2026-02-23 23:06:36` עד אמצע הלילה. בבוקר `2026-02-24` ה-kernel הראה `DEVICE=cpu` ו-`RuntimeError: No GPU`.
+
+**נתונים שאבדו עם reset:**
+- Fresh pretrain checkpoint (`checkpoints/pretrain/best_pretrain.pt` ב-Colab `/content/`)
+- logs/e2e_cv/fold{1..4}\_*.csv
+- checkpoints/finetune/fold{1..4}/best_finetune.pt
+
+**נתונים ששרדו (בדיסק המקומי):**
+- `logs/e2e_cv/fold0_pretrain.csv`
+- `logs/e2e_cv/fold0_finetune.csv`
+- `logs/e2e_cv_progress.csv`
+- `results/e2e_cv/fold0_oof_scores.csv`
+- `results/e2e_cv_final_report.csv` *(מציג "1-Fold CV, AUC=1.0" — מטעה, ראה אזהרה לעיל)*
+
+#### לקחים
+
+1. **אין להסיק מסיכונות מ-fold 0 בלבד** — fold 0 של 5-fold CV עם n_test≈5 הוא דגימה סטטיסטית זניחה
+2. **Fresh pretrain הגיוני** — val_loss ירד מ-0.707 (train) → 0.307 (val) ב-epoch 0; המגמה נראית טובה
+3. **Colab session management** — לבחון הרצה בשעות הבוקר (לא לילה) כדי למנוע session timeout; לשקול שמירה ל-Google Drive
+4. **Fold 0 val_auc=0.543 (epoch 0)** — נמוך, אך זה epoch ראשון בלבד מתוך 150 מקסימום עם warmup — אין מסקנה
+
+#### המשך מתוכנן
+
+> **הרצה #2:** חיבור T4 runtime חדש → הרצה מלאה מ-Cell 1 → עד Cell 8
+> - Cell 6 (fresh pretrain) יצטרך לרוץ מחדש (~3.7 דקות)  
+> - Cell 7 (5-fold CV) יצטרך לרוץ מחדש מ-fold 0 (~6-8 שעות)
+> - יש לשקול הרצה בבוקר כדי שה-session לא יפסיק בלילה
+
+---
+
 ## נספח — Open-Source Resources
 
 > אלה **לא** חלק מ-SSOT — משאבים חיצוניים לעיון בלבד.
