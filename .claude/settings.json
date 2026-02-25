@@ -25,7 +25,10 @@
       "Bash(curl:*)",
       "Bash(gh repo view:*)",
       "Bash(gh repo edit:*)",
-      "Bash(PYTHONIOENCODING=utf-8 python:*)"
+      "Bash(PYTHONIOENCODING=utf-8 python:*)",
+      "Read(//c/Users/ariel/.claude/projects/c--Users-ariel-Desktop-SentinelFatal2/memory/**)",
+      "Read(//c/Users/ariel/Desktop/SentinelFatal2/**)",
+      "Bash(done)"
     ]
   }
 }
