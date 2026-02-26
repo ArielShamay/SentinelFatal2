@@ -33,10 +33,25 @@ import yaml
 # Helpers
 # ---------------------------------------------------------------------------
 
-def load_config(path: Union[str, Path]) -> dict:
-    """Load YAML config and return as nested dict."""
+def load_config(path: Union[str, Path], overrides: dict = None) -> dict:
+    """Load YAML config and return as nested dict.
+
+    Args:
+        path:      Path to YAML config file.
+        overrides: Optional flat dict of overrides.  Keys that exist in
+                   cfg['model'] (e.g. d_model, n_layers, dropout) are written
+                   there; all other keys go to cfg['finetune'].
+    """
     with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        cfg = yaml.safe_load(f)
+    if overrides:
+        model_keys = set(cfg.get("model", {}).keys())
+        for k, v in overrides.items():
+            if k in model_keys:
+                cfg["model"][k] = v
+            else:
+                cfg.setdefault("finetune", {})[k] = v
+    return cfg
 
 
 # ---------------------------------------------------------------------------
