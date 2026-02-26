@@ -317,6 +317,7 @@ def train(
     log_path: str = "logs/finetune_loss.csv",
     quiet: bool = False,
     config_overrides: Optional[dict] = None,
+    save_epoch_ckpts: bool = True,
 ) -> None:
     """Full fine-tuning loop.
 
@@ -334,6 +335,8 @@ def train(
         config_overrides:     Optional flat dict of config values to override.
                               Keys matching 'model' section (d_model, n_layers, etc.)
                               are applied to cfg['model']; all others to cfg['finetune'].
+        save_epoch_ckpts:     If False, skip per-epoch checkpoint saves (only best is kept).
+                              Set False during config selection to avoid filling disk.
     """
     _MODEL_KEYS = {'d_model', 'n_layers', 'n_heads', 'dropout', 'patch_len', 'stride',
                    'n_patches', 'd_ff', 'activation', 'norm', 'n_channels'}
@@ -410,6 +413,9 @@ def train(
     val_stride_ds   = int(ftcfg.get("window_stride", cfg["pretrain"]["window_stride"]))
     train_stride_ds = int(ftcfg.get("train_stride", val_stride_ds))
     do_augment      = (max_batches == 0)  # disable during dry-run for speed
+    import os as _os
+    _n_workers = min(2, _os.cpu_count() or 0)  # 2 workers on Colab T4; 0 on Windows (fork issues)
+    _pin_mem   = torch.cuda.is_available()
     train_loader, val_loader = build_finetune_loaders(
         train_csv=train_csv,
         val_csv=val_csv,
@@ -419,7 +425,8 @@ def train(
         train_stride=train_stride_ds,
         augment=do_augment,
         batch_size=bs,
-        num_workers=0,
+        num_workers=_n_workers,
+        pin_memory=_pin_mem,
     )
     print(f"[finetune] dataset - train windows={len(train_loader.dataset)} "
           f"(stride={train_stride_ds}, augment={do_augment}), "
@@ -540,7 +547,8 @@ def train(
         import sys; sys.stdout.flush()
         append_csv_log(log_path, epoch, train_loss, val_auc, smooth_auc, lr_backbone, lr_head)
 
-        save_checkpoint(model, Path(checkpoint_dir) / f"epoch_{epoch:03d}.pt")
+        if save_epoch_ckpts:
+            save_checkpoint(model, Path(checkpoint_dir) / f"epoch_{epoch:03d}.pt")
 
         if smooth_auc > best_smooth_auc:
             best_smooth_auc = smooth_auc

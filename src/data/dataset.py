@@ -322,6 +322,7 @@ def build_finetune_loaders(
     augment: bool = False,
     batch_size: int = 32,
     num_workers: int = 0,
+    pin_memory: bool = False,
 ) -> Tuple[DataLoader, DataLoader]:
     """Build train and validation DataLoaders for fine-tuning.
 
@@ -336,6 +337,7 @@ def build_finetune_loaders(
         augment:        Pass True to enable noise+jitter augmentation on train set.
         batch_size:     Batch size (32 per config — ⚠ S6).
         num_workers:    DataLoader worker processes (default 0 = main thread).
+        pin_memory:     If True, use pinned (page-locked) memory for faster GPU transfer.
 
     Returns:
         (train_loader, val_loader)
