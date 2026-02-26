@@ -30,35 +30,99 @@ pretrain:
   mask_value: 0.0              # zero masking — ✓ מאמר Section II-D
   optimizer: adam              # — ✓ מאמר Section II-D
   lr: 1.0e-4                   # learning rate — ✓ מאמר Section II-D
-  lr_min: 1.0e-6               # ReduceLROnPlateau floor — ⚠ S12
-  lr_scheduler: reduce_on_plateau  # halve LR when val_loss stalls — ⚠ S12
-  lr_scheduler_patience: 5     # epochs without improvement → cut LR — ⚠ S12
-  max_epochs: 300              # — ⚠ S5 (was 200; scheduler handles overfitting guard)
-  patience: 20                 # early stopping on val reconstruction loss — ⚠ S5 (was 10)
+  lr_min: 1.0e-6               # scheduler floor — ⚠ S12
+  lr_scheduler: cosine_warm_restarts  # plan_2: CosineAnnealingWarmRestarts (was reduce_on_plateau)
+  cosine_T0: 50                # plan_2: first restart cycle length (epochs)
+  cosine_T_mult: 2             # plan_2: cycle length multiplier (50 → 100 → 200)
+  # Progressive masking curriculum (plan_2 §2.2.2):
+  #   epochs 0-20: mask_ratio=0.20, 20-50: 0.30, 50+: 0.40
+  mask_ratio_schedule:         # list of [start_epoch, ratio] breakpoints
+    - [0,  0.20]
+    - [20, 0.30]
+    - [50, 0.40]
+  checkpoint_every: 25         # save snapshot every N epochs (plan_2 §2.2.3)
+  max_epochs: 300              # — ⚠ S5 (was 200; gives ~2.5 cosine cycles)
+  patience: 50                 # plan_2: increased from 20 to give cosine restarts room
   batch_size: 64               # — ⚠ הנחה S6
   window_stride: 900           # sliding window stride (50% overlap) — ⚠ הנחה S4
 
 finetune:
   optimizer: adamw             # — ✓ מאמר Section II-E
-  lr_backbone: 5.0e-5          # differential LR for backbone — ⚠ S14 (was 1e-5; backbone nearly frozen)
+  # Progressive unfreezing schedule (plan_2 §3.1.1) — dynamic by num_layers
+  progressive_unfreeze: true
+  unfreeze_phases:             # [start_epoch, n_top_layers_to_unfreeze, lr_backbone, lr_head]
+    - [0,   0,  0.0,    1.0e-3]   # Phase 1: head only (backbone frozen)
+    - [5,   1,  1.0e-5, 5.0e-4]   # Phase 2: top-1 layer
+    - [15,  2,  3.0e-5, 3.0e-4]   # Phase 3: top-2 layers
+    - [30, -1,  5.0e-5, 1.0e-4]   # Phase 4: all (-1 = full unfreeze incl. embed)
+  lr_backbone: 5.0e-5          # final differential LR — ⚠ S14
   lr_head: 1.0e-4              # differential LR for head — ⚠ הנחה S6
-  lr_warmup_epochs: 5          # linear warmup epochs (0→target LR) — ⚠ S14 (protect pretrained weights)
-  lr_min: 1.0e-7               # ReduceLROnPlateau floor — ⚠ S12
-  lr_scheduler: reduce_on_plateau  # halve LR when val_auc stalls — ⚠ S12
+  lr_warmup_epochs: 5          # linear warmup epochs before Phase 1 — ⚠ S14
+  lr_min: 1.0e-7               # scheduler floor — ⚠ S12
+  lr_scheduler: reduce_on_plateau  # halve LR when val_auc stalls (inside each phase)
   lr_scheduler_patience: 7     # epochs without improvement → cut LR — ⚠ S12
   weight_decay: 1.0e-2         # AdamW weight decay — ⚠ הנחה S6
-  max_epochs: 150              # — ✓ מאמר II-E (was 100; extra room for scheduler to work)
-  patience: 25                 # early stopping on val AUC — ✓ מאמר II-E (was 15)
-  batch_size: 32               # small dataset (441 recordings) — ⚠ הנחה S6
+  max_epochs: 150              # — ✓ מאמר II-E
+  patience: 25                 # early stopping on smooth val AUC — ✓ מאמר II-E
+  batch_size: 32               # small dataset — ⚠ הנחה S6
   gradient_clip: 1.0           # max gradient norm — ⚠ הנחה S6
-  val_stride: 60               # dense inference stride for val AUC (286 windows/rec vs 14) — ⚠ S12
-  train_stride: 60             # dense sliding-window stride for training (parity with val, more samples) — ⚠ S13
-  n_classes: 2                 # binary: 0=normal 1=acidemia — ⚠ הנחה (binary per project design; paper uses binary outputs but does not name n_classes)
+  val_stride: 60               # dense inference stride for val AUC — ⚠ S12
+  train_stride: 60             # dense sliding-window stride for training — ⚠ S13
+  n_classes: 2                 # binary — ⚠ הנחה
+  # SWA (plan_2 §3.1.2)
+  swa_start: 50                # epoch to begin SWA averaging
+  swa_end: 100                 # epoch to stop SWA averaging
+  swa_lr: 5.0e-5               # constant SWA learning rate
+  # Loss function (plan_2 §3.2.2)
+  loss: focal                  # 'cross_entropy' | 'focal'
+  focal_gamma: 2.0             # focusing parameter γ
+  label_smoothing: 0.05        # plan_2 §3.2.3
+  # Augmentation (plan_2 §3.2.1)
+  augmentation:
+    gaussian_noise:   {sigma_fhr: 0.01, sigma_uc: 0.005, p: 0.5}
+    random_scaling:   {scale_min: 0.95, scale_max: 1.05, p: 0.3}
+    temporal_jitter:  {max_shift: 50, p: 0.5}
+    channel_dropout:  {p: 0.1}
+    cutout:           {min_len: 48, max_len: 96, p: 0.2}
+    mixup:            {alpha: 0.2, p: 0.15}
+    mixup_with_focal: false     # safety: disable Mixup when loss=focal (plan_2 §3.2.1)
+    focal_softlabel_mode: two_term_interp  # used only if mixup_with_focal: true
+
+# Config candidates for plan_2 config selection on 441/56 split (plan_2 §3.3)
+config_candidates:
+  A:
+    d_model: 128
+    num_layers: 3
+    lr_backbone: 5.0e-5
+    loss: cross_entropy
+    augmentation: true
+  B:
+    d_model: 128
+    num_layers: 3
+    lr_backbone: 5.0e-5
+    loss: focal
+    focal_gamma: 2.0
+    augmentation: true
+  C:
+    d_model: 256
+    num_layers: 4
+    lr_backbone: 3.0e-5
+    loss: focal
+    focal_gamma: 2.0
+    augmentation: true
 
 alerting:
-  threshold: 0.4               # S11: lowered from 0.5 (Deviation S11, validated 2026-02-23)
-  decision_threshold: 0.284    # Youden-optimal LR decision threshold (AUC=0.839, Sens=0.818)               # alert segment threshold — ✓ מאמר Section II-F
-  inference_stride_repro: 1    # 1-sample stride for official evaluation — ✓ מאמר Section II-F
-  inference_stride_runtime: 60 # 15-sec stride for operational demo only — ⚠ הנחה S6
+  threshold: 0.4               # alert segment threshold — S11 validated 2026-02-23
+  threshold_candidates: [0.30, 0.35, 0.40, 0.45]   # plan_2 §4.2 sweep
+  inference_stride: 24         # plan_2 §4.4: feature extraction stride (train+test identical)
+  n_features: 12               # plan_2 §4.1 (was 6)
+  # LR regularization for 12-feature model (plan_2 §4.1)
+  lr_C: 0.1                    # LogisticRegression C
+  lr_use_pca: true             # StandardScaler → PCA(0.95) → LR
+  decision_threshold: 0.284    # Youden-optimal from S14 (used for Reproducibility Track only)
+  threshold_protocol: clinical_primary   # Sens-max s.t. Spec≥0.65 (plan_2 §5.2)
+  spec_constraint: 0.65        # minimum Specificity for clinical threshold
+  inference_stride_repro: 1    # stride for official reproducibility evaluation
+  inference_stride_runtime: 60 # operational demo only
 
-seed: 42                       # ⚠ הנחה (no source; standard practice for reproducibility)
+seed: 42                       # ⚠ הנחה (reproducibility)

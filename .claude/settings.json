@@ -28,7 +28,20 @@
       "Bash(PYTHONIOENCODING=utf-8 python:*)",
       "Read(//c/Users/ariel/.claude/projects/c--Users-ariel-Desktop-SentinelFatal2/memory/**)",
       "Read(//c/Users/ariel/Desktop/SentinelFatal2/**)",
-      "Bash(done)"
+      "Bash(done)",
+      "Bash(python3.exe -c \"import json; f=open\\(''c:/Users/ariel/Desktop/SentinelFatal2/notebooks/08_e2e_cv_v2.ipynb''\\); nb=json.load\\(f\\); cells=nb[''cells'']; print\\(f''Total cells: {len\\(cells\\)}''\\); [print\\(f''  Cell {i} [{c[\"\"cell_type\"\"]}]: '' + ''''.join\\(c[\"\"source\"\"]\\)[:80].replace\\(''\\\\n'','' ''\\)\\) for i,c in enumerate\\(cells\\)]\")",
+      "Bash(py -c \"import json; f=open\\(''c:/Users/ariel/Desktop/SentinelFatal2/notebooks/08_e2e_cv_v2.ipynb''\\); nb=json.load\\(f\\); cells=nb[''cells'']; print\\(f''Total cells: {len\\(cells\\)}''\\); [print\\(f''  Cell {i} [{c[\"\"cell_type\"\"]}]: '' + ''''.join\\(c[\"\"source\"\"]\\)[:80].replace\\(''\\\\n'','' ''\\)\\) for i,c in enumerate\\(cells\\)]\")",
+      "Bash(for f in \"scripts/run_e2e_cv_v2.py\" \"src/train/augmentations.py\" \"src/train/focal_loss.py\" \"src/train/swa.py\" \"src/train/pretrain.py\" \"src/train/finetune.py\" \"src/data/dataset.py\" \"src/inference/alert_extractor.py\" \"config/train_config.yaml\" \"notebooks/08_e2e_cv_v2.ipynb\")",
+      "Bash(do)",
+      "Bash(if [ -f \"c:/Users/ariel/Desktop/SentinelFatal2/$f\" ])",
+      "Bash(then)",
+      "Bash(echo \"PASS  $f\")",
+      "Bash(else)",
+      "Bash(echo \"FAIL  $f\")",
+      "Bash(fi)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\ariel\\Desktop\\SentinelFatal2\\notebooks"
     ]
   }
 }

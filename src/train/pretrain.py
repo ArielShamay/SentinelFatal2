@@ -2,7 +2,7 @@
 pretrain.py — Self-Supervised Pre-training Script for SentinelFatal2
 =====================================================================
 Source: arXiv:2601.06149v1, Sections II-C, II-D, Equation 2
-SSOT:   docs/work_plan.md, Part ה.4 + חלק ו שלב 3 + deviation_log.md S4, S5, S6, S9
+SSOT:   docs/plan_2.md §2.2
 
 Training objective
 ------------------
@@ -12,25 +12,25 @@ Channel-Asymmetric Masked Auto-Encoding:
   • PretrainingHead reconstructs masked FHR patches from their encoder tokens.
   • Loss (Eq. 2): MSE on masked FHR patches only.
 
-Masking policy
---------------
-  Per-batch: one mask_indices vector shared across all samples in the batch.
-  This is regenerated each iteration for stochastic coverage.
+plan_2 improvements (§2.2)
+---------------------------
+  • LR scheduler changed to CosineAnnealingWarmRestarts(T_0=50, T_mult=2).
+  • Progressive masking curriculum: 0.20 (0-20) → 0.30 (20-50) → 0.40 (50+).
+  • Checkpoint saved every checkpoint_every epochs (default 25).
+  • Linear probe gate logged after training (probe_auc target > 0.60).
 
 Usage
 -----
-  # Full run (Colab / GPU):
   python src/train/pretrain.py --config config/train_config.yaml
-
-  # Dry-run (CPU, 2 batches, batch_size=4):
   python src/train/pretrain.py --config config/train_config.yaml \\
-      --device cpu --batch-size 4 --max-batches 2
+      --device cpu --batch-size 4 --max-batches 2  # dry-run
 
 Outputs
 -------
-  checkpoints/pretrain/epoch_NNN.pt    — state dict per epoch
-  checkpoints/pretrain/best_pretrain.pt — best val reconstruction loss
-  logs/pretrain_loss.csv               — epoch, train_loss, val_loss, lr
+  checkpoints/pretrain/epoch_NNN.pt    — per-epoch checkpoint
+  checkpoints/pretrain/snap_NNN.pt     — periodic snapshot (every 25 epochs)
+  checkpoints/pretrain/best_pretrain.pt — best val MSE
+  logs/pretrain_loss.csv               — epoch, train_loss, val_loss, lr, mask_ratio
 """
 
 from __future__ import annotations
@@ -57,6 +57,32 @@ from src.model.patchtst import PatchTST, load_config
 from src.model.heads import PretrainingHead
 from src.data.dataset import build_pretrain_loaders
 from src.data.masking import apply_masking, _random_partition
+
+
+# ---------------------------------------------------------------------------
+# Progressive masking curriculum (plan_2 §2.2.2)
+# ---------------------------------------------------------------------------
+
+def get_mask_ratio_for_epoch(
+    epoch: int,
+    schedule: Optional[list] = None,
+    default: float = 0.4,
+) -> float:
+    """Return the mask_ratio to use for a given epoch.
+
+    Schedule is a list of [start_epoch, ratio] breakpoints (ascending).
+    Example (plan_2 default):
+        [[0, 0.20], [20, 0.30], [50, 0.40]]
+    Returns the ratio of the last breakpoint whose start_epoch <= epoch.
+    """
+    if not schedule:
+        return default
+    current = default
+    for entry in schedule:
+        start_ep, ratio = int(entry[0]), float(entry[1])
+        if epoch >= start_ep:
+            current = ratio
+    return current
 
 
 # ---------------------------------------------------------------------------
@@ -147,25 +173,28 @@ def run_epoch(
     training: bool = True,
     max_batches: int = 0,
     verbose: bool = True,
+    mask_ratio_override: Optional[float] = None,
 ) -> float:
     """Run one training or validation epoch.
 
     Args:
-        model:       PatchTST model.
-        loader:      DataLoader for this epoch.
-        optimizer:   Adam optimizer (None during validation).
-        device:      torch.device.
-        cfg:         Full config dict (for masking params).
-        clip_norm:   Max gradient norm (default 1.0 — ⚠ S6).
-        training:    If True, performs backward + optimizer step.
-        max_batches: If > 0, stop after this many batches (dry-run).
-        verbose:     Print per-batch loss.
+        model:              PatchTST model.
+        loader:             DataLoader for this epoch.
+        optimizer:          Adam optimizer (None during validation).
+        device:             torch.device.
+        cfg:                Full config dict (for masking params).
+        clip_norm:          Max gradient norm (default 1.0).
+        training:           If True, performs backward + optimizer step.
+        max_batches:        If > 0, stop after this many batches (dry-run).
+        verbose:            Print per-batch loss.
+        mask_ratio_override: If set, overrides cfg mask_ratio (for curriculum).
 
     Returns:
         Mean MSE loss over the epoch.
     """
     ptcfg = cfg["pretrain"]
-    mask_ratio     = float(ptcfg["mask_ratio"])
+    mask_ratio = mask_ratio_override if mask_ratio_override is not None \
+                 else float(ptcfg["mask_ratio"])
     min_group_size = int(ptcfg["min_group_size"])
     max_group_size = int(ptcfg["max_group_size"])
     n_patches      = int(cfg["data"]["n_patches"])
@@ -232,14 +261,15 @@ def init_csv_log(path: str | Path) -> None:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["epoch", "train_loss", "val_loss", "lr"])
+        writer.writerow(["epoch", "train_loss", "val_loss", "lr", "mask_ratio"])
 
 
 def append_csv_log(path: str | Path, epoch: int, train_loss: float,
-                   val_loss: float, lr: float) -> None:
+                   val_loss: float, lr: float, mask_ratio: float = 0.4) -> None:
     with open(path, "a", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow([epoch, f"{train_loss:.8f}", f"{val_loss:.8f}", f"{lr:.2e}"])
+        writer.writerow([epoch, f"{train_loss:.8f}", f"{val_loss:.8f}",
+                         f"{lr:.2e}", f"{mask_ratio:.2f}"])
 
 
 # ---------------------------------------------------------------------------
@@ -323,19 +353,33 @@ def pretrain(
     print(f"[pretrain] model: {model}")
     print(f"[pretrain] encoder params: {model.n_encoder_params:,}")
 
-    # ---- Optimizer + LR Scheduler (S12 improvement) -------------------------
-    # Adam lr=1e-4 — ✓ paper II-D.
-    # ReduceLROnPlateau: halves LR whenever val_loss stalls for lr_scheduler_patience
-    # epochs. Allows model to keep descending past the initial plateau without
-    # overfitting (the outer early-stopping patience=20 is the final guard).
-    optimizer  = torch.optim.Adam(model.parameters(), lr=float(ptcfg["lr"]))
-    lr_min     = float(ptcfg.get("lr_min", 1e-6))
-    sched_pat  = int(ptcfg.get("lr_scheduler_patience", 5))
-    scheduler  = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", factor=0.5, patience=sched_pat,
-        min_lr=lr_min,
-    )
-    print(f"[pretrain] scheduler: ReduceLROnPlateau(patience={sched_pat}, min_lr={lr_min:.0e})")
+    # ---- Optimizer + LR Scheduler (plan_2 §2.2.1) ---------------------------
+    # CosineAnnealingWarmRestarts replaces ReduceLROnPlateau.
+    # T_0=50, T_mult=2 → cycles of 50, 100, 200 epochs.
+    # This allows escaping local minima and prevents the aggressive early LR decay
+    # that caused pretrain to stop using useful features (best epoch=2 in S12).
+    optimizer = torch.optim.Adam(model.parameters(), lr=float(ptcfg["lr"]))
+
+    sched_type = str(ptcfg.get("lr_scheduler", "cosine_warm_restarts"))
+    if sched_type == "cosine_warm_restarts":
+        T0     = int(ptcfg.get("cosine_T0", 50))
+        T_mult = int(ptcfg.get("cosine_T_mult", 2))
+        lr_min = float(ptcfg.get("lr_min", 1e-6))
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            optimizer, T_0=T0, T_mult=T_mult, eta_min=lr_min,
+        )
+        print(f"[pretrain] scheduler: CosineAnnealingWarmRestarts(T_0={T0}, T_mult={T_mult}, eta_min={lr_min:.0e})")
+    else:  # fallback: ReduceLROnPlateau
+        lr_min    = float(ptcfg.get("lr_min", 1e-6))
+        sched_pat = int(ptcfg.get("lr_scheduler_patience", 5))
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode="min", factor=0.5, patience=sched_pat, min_lr=lr_min,
+        )
+        print(f"[pretrain] scheduler: ReduceLROnPlateau(patience={sched_pat})")
+
+    # Progressive masking schedule (plan_2 §2.2.2)
+    mask_schedule = ptcfg.get("mask_ratio_schedule", None)
+    checkpoint_every = int(ptcfg.get("checkpoint_every", 25))
 
     # ---- Logging -------------------------------------------------------------
     init_csv_log(log_path)
@@ -348,39 +392,58 @@ def pretrain(
     verbose       = not quiet
 
     print(f"[pretrain] Starting training: max_epochs={max_epochs}, patience={patience}")
+    print(f"[pretrain] Checkpoint snapshots every {checkpoint_every} epochs")
 
     for epoch in range(max_epochs):
         t0 = time.time()
+
+        # Progressive mask ratio for this epoch (plan_2 §2.2.2)
+        epoch_mask_ratio = get_mask_ratio_for_epoch(epoch, mask_schedule,
+                                                    default=float(ptcfg["mask_ratio"]))
 
         train_loss = run_epoch(
             model, train_loader, optimizer, device, cfg,
             clip_norm=1.0, training=True,
             max_batches=max_batches, verbose=verbose,
+            mask_ratio_override=epoch_mask_ratio,
         )
         val_loss = run_epoch(
             model, val_loader, None, device, cfg,
             clip_norm=1.0, training=False,
             max_batches=max_batches, verbose=False,
+            mask_ratio_override=epoch_mask_ratio,
         )
 
-        scheduler.step(val_loss)  # update LR based on val_loss improvement
+        # Scheduler step
+        if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+            scheduler.step(val_loss)
+        else:
+            scheduler.step()  # CosineAnnealingWarmRestarts steps every epoch
+
         lr      = optimizer.param_groups[0]["lr"]
         elapsed = time.time() - t0
         print(
             f"[epoch {epoch:03d}] train_loss={train_loss:.6f}  "
-            f"val_loss={val_loss:.6f}  lr={lr:.2e}  ({elapsed:.1f}s)"
+            f"val_loss={val_loss:.6f}  lr={lr:.2e}  "
+            f"mask={epoch_mask_ratio:.2f}  ({elapsed:.1f}s)"
         )
-        append_csv_log(log_path, epoch, train_loss, val_loss, lr)
+        sys.stdout.flush()
+        append_csv_log(log_path, epoch, train_loss, val_loss, lr, epoch_mask_ratio)
 
         # Checkpoint every epoch
         save_checkpoint(model, Path(checkpoint_dir) / f"epoch_{epoch:03d}.pt")
+
+        # Periodic snapshot (plan_2 §2.2.3)
+        if epoch > 0 and epoch % checkpoint_every == 0:
+            save_checkpoint(model, Path(checkpoint_dir) / f"snap_{epoch:03d}.pt")
+            print(f"  [snap] Saved snapshot at epoch {epoch}")
 
         # Best model + early stopping
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             patience_ctr  = 0
             save_checkpoint(model, Path(checkpoint_dir) / "best_pretrain.pt")
-            print(f"  [OK] New best val_loss={best_val_loss:.6f} - saved best_pretrain.pt")
+            print(f"  [OK] New best val_loss={best_val_loss:.6f} — saved best_pretrain.pt")
         else:
             patience_ctr += 1
             print(f"  No improvement ({patience_ctr}/{patience})")
@@ -389,9 +452,9 @@ def pretrain(
                       f"(patience={patience} exhausted)")
                 break
 
-        # Dry-run: stop after first epoch if max_batches is set
+        # Dry-run: stop after first epoch
         if max_batches > 0:
-            print("[pretrain] Dry-run complete - stopping after 1 epoch.")
+            print("[pretrain] Dry-run complete — stopping after 1 epoch.")
             break
 
     print(f"[pretrain] Finished. Best val_loss={best_val_loss:.6f}")

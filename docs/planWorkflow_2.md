@@ -211,8 +211,28 @@ Tasks:
    - זיכרון GPU מספיק
    - דיסק מספיק ל-unzip + checkpoints
 4. הרץ clone/pull + pip install לפי requirements.
-5. הורד ZIP מ-GitHub וחלץ לנתיב הנכון.
-6. כתוב runtime_preflight.md עם כל הערכים.
+5. Code Readiness Check (plan_2 §8) — ודא שהקבצים הבאים קיימים אחרי clone:
+   - scripts/run_e2e_cv_v2.py
+   - src/train/augmentations.py
+   - src/train/focal_loss.py
+   - src/train/swa.py
+   - src/train/pretrain.py (עם cosine annealing)
+   - src/train/finetune.py (עם progressive unfreezing + focal loss + augmentations)
+   - src/data/dataset.py (עם augmentation pipeline)
+   - src/inference/alert_extractor.py (עם 12 features)
+   - config/train_config.yaml (עם configs A/B/C)
+   - notebooks/08_e2e_cv_v2.ipynb
+   אם חסר קובץ → FAIL, לא מתחילים אימון.
+6. הורד ZIP מ-GitHub וחלץ לנתיב הנכון.
+7. Determinism Verification (plan_2 §15.1) — ודא שהקוד מגדיר:
+   - random.seed(42)
+   - numpy.random.seed(42)
+   - torch.manual_seed(42)
+   - torch.cuda.manual_seed_all(42)
+   - torch.backends.cudnn.deterministic = True
+   - torch.backends.cudnn.benchmark = False
+   הדפס את הערכים בפועל בזמן ריצה ותעד ב-runtime_preflight.md.
+8. כתוב runtime_preflight.md עם כל הערכים (כולל Code Readiness: PASS/FAIL, Seeds: PASS/FAIL).
 
 If GPU missing:
 - אל תתחיל אימון כבד.
@@ -256,9 +276,15 @@ If Red Flag:
 4. החל תיקון מינימלי לפי SSOT והמשך
 
 Deliverables:
-- checkpoints/e2e_cv_v2/shared_pretrain/*
+- checkpoints/e2e_cv_v2/shared_pretrain/best_pretrain.pt
+- checkpoints/e2e_cv_v2/shared_pretrain/pretrain_probe_auc.txt
+- logs/e2e_cv_v2/shared_pretrain_loss.csv
 - logs/e2e_cv_v2/config_selection_441_56.csv
-- artifacts של fold0
+- checkpoints/e2e_cv_v2/fold0/finetune/best_finetune.pt
+- checkpoints/e2e_cv_v2/fold0/finetune/swa_finetune.pt
+- checkpoints/e2e_cv_v2/fold0/alerting/lr_model.pkl
+- logs/e2e_cv_v2/fold0_finetune.csv
+- results/e2e_cv_v2/fold0_oof_scores.csv
 ```
 
 ### 5.6 Prompt — A5 Trainer Phase A2 (Session 2)
@@ -269,15 +295,28 @@ Role:
 
 Order (Mandatory):
 1. הרץ G0 Ablation Gate על folds 0+1 (shared vs clean pretrain)
+   - הערה: fold 1 shared מהאבלציה משמש גם כתוצאת CV fold 1 (ללא אימון כפול)
 2. כתוב results/e2e_cv_v2/ablation_shared_vs_clean.csv
-3. רק אז השלם folds 1..4
+3. רק אז השלם folds 2..4 (fold 1 כבר הושלם בשלב 1)
 4. מיזוג OOF וחישוב CI
+5. Reproducibility Track: הרץ את הצינור המלא (finetune + feature extraction + LR) על split ההיסטורי 441/56/55 עם אותו config נעול מ-Config Selection
+   - Output: results/e2e_cv_v2/repro_track_55.csv
 
 Must Enforce:
 - feature extraction stride=24 (train/test זהה)
 - no test-time tuning
 - decision threshold ראשי רק מתוך ft_val
 
+- MVP alerting baseline: `LR + 6 features + StandardScaler` (Phase A default).
+- 12-feature mode is optional (Phase B/C only) and requires a gate on folds 0+1:
+  - mean ft_val AUC improvement >= 0.01 vs 6 features
+  - no single-fold degradation on folds 0 and 1
+  - otherwise rollback to 6 features.
+- AT sweep protocol is mandatory per fold:
+  - `AT_candidates = [0.30, 0.35, 0.40, 0.45]`
+  - choose `threshold_primary` on `ft_val` by Sens-max under `Spec>=0.65`
+  - keep `threshold_youden` on `ft_val` for reporting only
+  - evaluate on `test_fold` only after locking AT + threshold on inner data.
 Resume:
 - אם fold כבר הושלם → דלג אוטומטית והמשך fold הבא
 
@@ -285,10 +324,24 @@ If Session Time Low (<2h):
 - לא מתחילים אבלציה/ניסוי חדש
 - משלימים רק MVP
 
+Phase B (אם נשאר זמן אחרי MVP):
+- Multi-seed stability: הרצה חוזרת של folds 0+2 עם seeds 123, 3407 (בנוסף ל-42 הראשי)
+  - Criterion: אם std(AUC) across 3 seeds > 0.03 על אותו fold → training unstable
+  - Output: results/e2e_cv_v2/multi_seed_stability.csv
+
 Deliverables:
-- results/e2e_cv_v2/fold*_oof_scores.csv
+- Per fold (1..4):
+  - checkpoints/e2e_cv_v2/fold{k}/finetune/best_finetune.pt
+  - checkpoints/e2e_cv_v2/fold{k}/finetune/swa_finetune.pt
+  - checkpoints/e2e_cv_v2/fold{k}/alerting/lr_model.pkl
+  - logs/e2e_cv_v2/fold{k}_finetune.csv
+  - results/e2e_cv_v2/fold{k}_oof_scores.csv
+- results/e2e_cv_v2/ablation_shared_vs_clean.csv
 - results/e2e_cv_v2/global_oof_predictions.csv
 - results/e2e_cv_v2/e2e_cv_v2_per_fold.csv
+- results/e2e_cv_v2/threshold_sweep_summary.csv
+- results/e2e_cv_v2/features_6_vs_12_gate.csv
+- results/e2e_cv_v2/repro_track_55.csv
 ```
 
 ### 5.7 Prompt — A6 Runtime Monitor / Incident Response
@@ -326,15 +379,33 @@ Role:
 
 Tasks:
 1. חשב מדדי Stability Track (552 CV): AUC, CI, Sens/Spec/PPV/NPV.
-2. חשב Reproducibility Track על 441/56/55.
+2. קרא את results/e2e_cv_v2/repro_track_55.csv (שנוצר ע"י A5) וחשב מדדי Reproducibility Track על 441/56/55.
 3. ודא דיווח disclosure על transductive pretrain + תוצאת G0.
 4. בדוק DoD-MVP לפי סעיף 15.1 ב-plan_2.
-5. הפק דו"ח סופי מרוכז + טבלאות השוואה מול baseline/paper.
+5. הפק דו"ח סופי מרוכז + טבלאות השוואה מול baseline/paper (כולל Repro Track).
+6. וודא reproducibility artifacts: `split_hashes.txt`, `git_commit` column בכל CSV output, `requirements.txt` עם גרסאות מדויקות.
 
 Must Output:
-- results/e2e_cv_v2/e2e_cv_v2_final_report.csv
+- results/e2e_cv_v2/global_oof_predictions.csv
 - results/e2e_cv_v2/e2e_cv_v2_per_fold.csv
+- results/e2e_cv_v2/e2e_cv_v2_final_report.csv
+- results/e2e_cv_v2/comparison_table.csv
+- results/e2e_cv_v2/threshold_sweep_summary.csv
+- results/e2e_cv_v2/features_6_vs_12_gate.csv
+- results/e2e_cv_v2/repro_track_55.csv
+- logs/e2e_cv_v2/split_hashes.txt
 - docs/plan_2_execution_report.md
+
+DoD Artifact Verification (plan_2 §14 — חובה לבדוק קיום):
+- checkpoints/e2e_cv_v2/shared_pretrain/best_pretrain.pt
+- checkpoints/e2e_cv_v2/shared_pretrain/pretrain_probe_auc.txt
+- checkpoints/e2e_cv_v2/fold{0..4}/finetune/best_finetune.pt
+- checkpoints/e2e_cv_v2/fold{0..4}/finetune/swa_finetune.pt
+- checkpoints/e2e_cv_v2/fold{0..4}/alerting/lr_model.pkl
+- logs/e2e_cv_v2/shared_pretrain_loss.csv
+- logs/e2e_cv_v2/fold{0..4}_finetune.csv
+- logs/e2e_cv_v2/config_selection_441_56.csv
+אם חסר אפילו ארטיפקט אחד → הדוח מסומן INCOMPLETE ומפרט מה חסר.
 
 Fail Condition:
 - אם חסר אחד מארטיפקטי DoD-MVP -> הדוח מסומן INCOMPLETE.
@@ -344,9 +415,12 @@ Fail Condition:
 
 ## 6) צ'קליסט תפעולי ל-Notebook החדש (08_e2e_cv_v2.ipynb)
 
-1. תא בדיקת GPU:
+1. תא בדיקת GPU + Seeds + Determinism:
    - `torch.cuda.is_available()`
    - `!nvidia-smi`
+   - הגדרת seeds: `random.seed(42)`, `np.random.seed(42)`, `torch.manual_seed(42)`, `torch.cuda.manual_seed_all(42)`
+   - `torch.backends.cudnn.deterministic = True`, `torch.backends.cudnn.benchmark = False`
+   - הדפסת כל הערכים לאימות
 2. תא הורדת ZIP מ-GitHub (או skip אם כבר קיים ב-`/content`).
 3. תא אימות counts:
    - CTU-UHB == 552
@@ -356,8 +430,12 @@ Fail Condition:
 6. תא fold0 pilot.
 7. תא G0 ablation.
 8. תא loop folds 1..4 (resume-aware).
-9. תא bootstrap + final tables.
-10. תא export תוצרים (Drive/GitHub/Download).
+9. תא threshold sweep (`AT_candidates=[0.30,0.35,0.40,0.45]`) + primary/secondary threshold selection on `ft_val`.
+10. תא feature gate (6 vs 12) + rollback decision artifact.
+11. תא bootstrap + final tables + comparison table.
+12. תא reproducibility checks (`split_hashes.txt`, `git_commit` in CSVs, `requirements.txt` generation).
+13. תא Reproducibility Track: הרצת pipeline על 441/56/55 עם config נעול → `repro_track_55.csv`.
+14. תא export תוצרים (Drive/GitHub/Download).
 
 ---
 
@@ -403,3 +481,4 @@ Phase A נחשב "בוצע" רק אם:
 2. קיימים כל ארטיפקטי חובה תחת `checkpoints/e2e_cv_v2/`, `logs/e2e_cv_v2/`, `results/e2e_cv_v2/`.
 3. `incidents.md` קיים (גם אם ריק עם הצהרת "No incidents").
 4. יש דו"ח סופי עם שני מסלולים: Stability + Reproducibility.
+5. קיימים בפועל (לא רק בדוח): `comparison_table.csv`, `threshold_sweep_summary.csv`, `features_6_vs_12_gate.csv`, `split_hashes.txt`, `repro_track_55.csv`.

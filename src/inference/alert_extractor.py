@@ -2,28 +2,32 @@
 alert_extractor.py — Alert Segment Extraction + Feature Computation
 ====================================================================
 Source: arXiv:2601.06149v1, Section II-F, Figure 5
-SSOT:   docs/work_plan.md, Part ה.6 + חלק ו, שלב 5.2-5.3
+SSOT:   docs/plan_2.md §4.1
 
-Stage 2 of the alerting pipeline:
-    1. extract_alert_segments()   — find contiguous score > threshold regions.
-    2. compute_alert_features()   — compute exactly 4 features from a segment
-                                    (P5 fix v2: time-integral features normalized
-                                    by dt = stride/fs).
+plan_2 §4.1 — 12 features (was 4/6)
+--------------------------------------
+Features 1-6:  unchanged from S14 (segment_length, max_prediction,
+               cumulative_sum, weighted_integral, n_alert_segments,
+               alert_fraction)
+Features 7-12: NEW — mean_prediction, std_prediction,
+               max_pred_all_segments, total_alert_duration,
+               recording_max_score, recording_mean_above_th
 
-Alert threshold = 0.4 (Deviation S11 — lowered from 0.5; validated 2026-02-23).
-Decision threshold = 0.284 (Youden-optimal, test AUC=0.839, Sens=0.818).
-Feature count   = 4   (LOCKED — paper Section II-F).
+Alert threshold = 0.4 (Deviation S11, validated 2026-02-23)
+Inference stride = 24 (plan_2 §4.4 — MUST be identical for train+test)
+Feature count   = 12 (plan_2, was 4/6)
 
 Usage::
 
     from src.inference.alert_extractor import (
         extract_alert_segments, compute_alert_features,
-        ALERT_THRESHOLD, DECISION_THRESHOLD
+        extract_recording_features,
+        ALERT_THRESHOLD
     )
 
     segments = extract_alert_segments(scores, threshold=ALERT_THRESHOLD)
-    for start_s, end_s, seg_scores in segments:
-        feats = compute_alert_features(seg_scores, inference_stride=1, fs=4)
+    feats = extract_recording_features(scores, threshold=ALERT_THRESHOLD,
+                                        inference_stride=24, fs=4.0)
 """
 
 from __future__ import annotations
@@ -103,7 +107,7 @@ def extract_alert_segments(
 
 
 # ---------------------------------------------------------------------------
-# compute_alert_features
+# compute_alert_features — per-segment (features 1-4, backward compat)
 # ---------------------------------------------------------------------------
 
 def compute_alert_features(
@@ -111,67 +115,152 @@ def compute_alert_features(
     inference_stride: int = 1,
     fs: float = 4.0,
 ) -> Dict[str, float]:
-    """Compute exactly 4 alert features from a contiguous alert segment.
+    """Compute 4 alert features from a single contiguous alert segment.
 
     Source: arXiv:2601.06149v1, Section II-F.
-    P5 fix v2: All time-/integral-based features are normalized by
-                dt = inference_stride / fs (seconds per step), so the
-                feature values are independent of which stride was used.
-                LR training and evaluation MUST use the same stride.
+    P5 fix v2: all time-based features normalized by dt = stride/fs.
+    Features 5-12 require all segments — see extract_recording_features().
 
     Args:
         segment_scores:   Per-window P(acidemia) scores within the segment.
-        inference_stride: Stride used in inference_recording() (samples).
-                          MUST match the stride used to train the LR model.
-        fs:               Signal sampling frequency in Hz (4 Hz).
+        inference_stride: Stride used in inference (samples). Must match LR training.
+        fs:               Sampling frequency in Hz (4 Hz).
 
     Returns:
-        dict with exactly 4 keys:
-            'segment_length'    : float — total alert duration in minutes.
-            'max_prediction'    : float — max P(acidemia) in the segment.
-            'cumulative_sum'    : float — integral of scores (units: score*seconds).
-            'weighted_integral' : float — integral of (score-0.5)^2 (score^2*seconds).
-
-    Raises:
-        ValueError: If segment_scores is empty.
+        dict with 4 keys: segment_length, max_prediction,
+                          cumulative_sum, weighted_integral.
     """
     if len(segment_scores) == 0:
         raise ValueError("segment_scores must be non-empty.")
 
     p = np.asarray(segment_scores, dtype=np.float64)
-    dt = inference_stride / fs   # seconds per step   (repro: 0.25s, runtime: 15s)
+    dt = inference_stride / fs
 
-    features: Dict[str, float] = {
-        # Duration of alert segment in minutes
+    return {
         "segment_length":    float(len(p) * dt / 60.0),
-        # Maximum NN score (point value — no stride dependency)
         "max_prediction":    float(np.max(p)),
-        # Integral of NN score (score * seconds)
         "cumulative_sum":    float(np.sum(p) * dt),
-        # Integral of (score - 0.5)^2 (weighted severity)
         "weighted_integral": float(np.sum((p - 0.5) ** 2) * dt),
     }
 
-    assert len(features) == 4, "BUG: must return exactly 4 features"
-    return features
+
+# ---------------------------------------------------------------------------
+# extract_recording_features — all 12 features (plan_2 §4.1)
+# ---------------------------------------------------------------------------
+
+def extract_recording_features(
+    scores: List[Tuple[int, float]],
+    threshold: float = ALERT_THRESHOLD,
+    inference_stride: int = 24,
+    fs: float = 4.0,
+    n_features: int = 12,
+) -> Dict[str, float]:
+    """Compute all recording-level features for the LR classifier.
+
+    plan_2 §4.1: expanded from 6 to 12 features.
+    Features are computed from the longest alert segment (features 1-4, 7-8)
+    and from the full recording (features 5-6, 9-12).
+
+    Args:
+        scores:           List of (start_sample, score) from inference_recording().
+        threshold:        Alert segment threshold (default 0.40).
+        inference_stride: Stride used in inference — MUST match LR training stride.
+        fs:               Sampling frequency (4 Hz).
+        n_features:       6 (legacy) or 12 (plan_2 default).
+
+    Returns:
+        Dict with n_features keys (all float).
+        If no alert segments: all features are 0.0.
+    """
+    segments = extract_alert_segments(scores, threshold=threshold)
+    all_scores = [s for _, s in scores]
+    dt = inference_stride / fs
+
+    # ---- Zero baseline (no alert activity) -----------------------------------
+    if not segments:
+        zero: Dict[str, float] = {
+            "segment_length":        0.0,
+            "max_prediction":        0.0,
+            "cumulative_sum":        0.0,
+            "weighted_integral":     0.0,
+            "n_alert_segments":      0.0,
+            "alert_fraction":        0.0,
+        }
+        if n_features == 12:
+            zero.update({
+                "mean_prediction":       0.0,
+                "std_prediction":        0.0,
+                "max_pred_all_segments": 0.0,
+                "total_alert_duration":  0.0,
+                "recording_max_score":   float(np.max(all_scores)) if all_scores else 0.0,
+                "recording_mean_above_th": 0.0,
+            })
+        return zero
+
+    # ---- Longest segment (features 1-4) ----------------------------------------
+    longest_seg_scores = max(segments, key=lambda s: len(s[2]))[2]
+    p_long = np.asarray(longest_seg_scores, dtype=np.float64)
+
+    feats: Dict[str, float] = {
+        "segment_length":    float(len(p_long) * dt / 60.0),
+        "max_prediction":    float(np.max(p_long)),
+        "cumulative_sum":    float(np.sum(p_long) * dt),
+        "weighted_integral": float(np.sum((p_long - 0.5) ** 2) * dt),
+    }
+
+    # ---- Recording-level (features 5-6) ----------------------------------------
+    n_alert_windows = sum(len(seg[2]) for seg in segments)
+    n_total_windows = len(scores)
+    feats["n_alert_segments"] = float(len(segments))
+    feats["alert_fraction"]   = float(n_alert_windows / max(n_total_windows, 1))
+
+    if n_features == 12:
+        # Features 7-8: stats of longest segment
+        feats["mean_prediction"] = float(np.mean(p_long))
+        feats["std_prediction"]  = float(np.std(p_long)) if len(p_long) > 1 else 0.0
+
+        # Feature 9: max prediction across ALL segments
+        all_seg_scores = [s for _, _, seg in segments for s in seg]
+        feats["max_pred_all_segments"] = float(np.max(all_seg_scores))
+
+        # Feature 10: total alert duration in minutes
+        feats["total_alert_duration"] = float(n_alert_windows * dt / 60.0)
+
+        # Feature 11: recording-level max score (no threshold applied)
+        feats["recording_max_score"] = float(np.max(all_scores))
+
+        # Feature 12: mean score over all windows that exceed threshold
+        above_th = [s for _, s in scores if s > threshold]
+        feats["recording_mean_above_th"] = float(np.mean(above_th)) if above_th else 0.0
+
+    assert len(feats) == n_features, (
+        f"BUG: expected {n_features} features, got {len(feats)}: {list(feats.keys())}"
+    )
+    return feats
 
 
 # ---------------------------------------------------------------------------
-# Convenience: feature vector for recordings with NO alert segments
+# Convenience: zero feature vector (backward compat)
 # ---------------------------------------------------------------------------
 
 ZERO_FEATURES: Dict[str, float] = {
-    "segment_length":    0.0,
-    "max_prediction":    0.0,
-    "cumulative_sum":    0.0,
-    "weighted_integral": 0.0,
-    "n_alert_segments":  0.0,
-    "alert_fraction":    0.0,
+    # Features 1-6 (original 4 + S14 additions)
+    "segment_length":        0.0,
+    "max_prediction":        0.0,
+    "cumulative_sum":        0.0,
+    "weighted_integral":     0.0,
+    "n_alert_segments":      0.0,
+    "alert_fraction":        0.0,
+    # Features 7-12 (plan_2 §4.1 additions)
+    "mean_prediction":       0.0,
+    "std_prediction":        0.0,
+    "max_pred_all_segments": 0.0,
+    "total_alert_duration":  0.0,
+    "recording_max_score":   0.0,
+    "recording_mean_above_th": 0.0,
 }
-"""Zero-value feature vector for recordings that produce no alert segments.
+"""Zero feature vector for recordings with NO alert segments (plan_2 §4.1, 12 features).
 
-Assumption (logged as S10 in deviation_log.md):
-    Recordings with zero alert windows are assigned ZERO_FEATURES, representing
-    complete absence of alert activity.  Paper does not address this case explicitly.
-S14: Added n_alert_segments and alert_fraction (record-level features).
+Use extract_recording_features(scores, n_features=12) for normal usage.
+This constant is provided for initialisation / fallback only.
 """

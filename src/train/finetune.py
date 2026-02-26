@@ -2,31 +2,28 @@
 finetune.py — Supervised Fine-tuning Script for SentinelFatal2
 ===============================================================
 Source: arXiv:2601.06149v1, Section II-E
-SSOT:   docs/work_plan.md, Part ה.5 + חלק ו שלב 4 + deviation_log.md S6, S6.1
+SSOT:   docs/plan_2.md §3
 
-Training objective
-------------------
-Binary acidemia classification (pH <= 7.15 vs normal) using:
-  • Pre-trained PatchTST backbone (frozen LR 1e-5 — differential LR).
-  • New ClassificationHead (LR 1e-4).
-  • Cross-entropy loss with class_weight (P8 fix: [1.0, ~3.9]).
-  • Training unit: window. Validation unit: recording (P7 fix).
-  • AUC aggregation: max(window_scores) per recording (LOCKED).
+plan_2 improvements (§3)
+------------------------
+  • Progressive unfreezing (§3.1.1): 4 phases, dynamic by num_layers.
+  • SWA epochs 50-100 with mandatory BN recalibration (§3.1.2).
+  • Focal Loss γ=2 + Label Smoothing ε=0.05 (§3.2.2-3).
+  • Data Augmentation: Gaussian noise, scaling, jitter, ch_dropout, cutout (§3.2.1).
+  • Mixup disabled when loss=focal (safety policy, plan_2 §3.2.1).
 
 Usage
 -----
-  # Full run (Colab / GPU):
   python src/train/finetune.py --config config/train_config.yaml
-
-  # Dry-run (CPU, 2 batches):
   python src/train/finetune.py --config config/train_config.yaml \\
-      --device cpu --max-batches 2
+      --device cpu --max-batches 2  # dry-run
 
 Outputs
 -------
-  checkpoints/finetune/epoch_NNN.pt    — state dict per epoch
-  checkpoints/finetune/best_finetune.pt — best val AUC
-  logs/finetune_loss.csv               — epoch, train_loss, val_auc, lr_backbone, lr_head
+  checkpoints/finetune/epoch_NNN.pt     — per-epoch checkpoint
+  checkpoints/finetune/best_finetune.pt — best smooth val AUC
+  checkpoints/finetune/swa_model.pt     — SWA-averaged model (if SWA enabled)
+  logs/finetune_loss.csv                — epoch, train_loss, val_auc, smooth_auc, lr_bb, lr_hd
 """
 
 from __future__ import annotations
@@ -54,6 +51,104 @@ from src.model.patchtst import PatchTST, load_config
 from src.model.heads import ClassificationHead
 from src.data.dataset import build_finetune_loaders
 from src.train.utils import compute_recording_auc
+from src.train.swa import SWAAccumulator
+
+
+# ---------------------------------------------------------------------------
+# Focal Loss (plan_2 §3.2.2) — defined in src/train/focal_loss.py
+# ---------------------------------------------------------------------------
+
+from src.train.focal_loss import FocalLoss  # noqa: E402
+
+
+# ---------------------------------------------------------------------------
+# Data Augmentation (plan_2 §3.2.1) — defined in src/train/augmentations.py
+# ---------------------------------------------------------------------------
+
+from src.train.augmentations import augment_window  # noqa: E402
+
+
+# ---------------------------------------------------------------------------
+# Progressive Unfreezing (plan_2 §3.1.1)
+# ---------------------------------------------------------------------------
+
+def get_unfreeze_phase(epoch: int, phases: list) -> tuple:
+    """Return the current unfreeze phase config for a given epoch.
+
+    phases is a list of [start_epoch, n_top_layers, lr_backbone, lr_head].
+    n_top_layers = -1 means unfreeze everything (including embed).
+    Returns (n_top_layers, lr_backbone, lr_head).
+    """
+    current = phases[0]
+    for phase in phases:
+        if epoch >= int(phase[0]):
+            current = phase
+    return int(current[1]), float(current[2]), float(current[3])
+
+
+def apply_unfreeze_phase(
+    model: PatchTST,
+    n_top_layers: int,
+    lr_backbone: float,
+    lr_head: float,
+    optimizer: torch.optim.Optimizer,
+    weight_decay: float = 0.01,
+) -> None:
+    """Freeze/unfreeze backbone layers and update optimizer LRs.
+
+    n_top_layers:
+      0   → backbone fully frozen
+      k>0 → top-k encoder layers unfrozen (dynamic: uses model.encoder.layers)
+      -1  → all params unfrozen (including patch_embed)
+    """
+    # Infer total number of encoder layers dynamically (plan_2 §3.1.1 constraint)
+    encoder_layers = list(model.encoder.parameters())
+    try:
+        n_total = len(model.encoder.layers)   # list of transformer layers
+    except AttributeError:
+        n_total = model.encoder.num_layers if hasattr(model.encoder, 'num_layers') else 3
+
+    # Freeze everything first
+    for param in model.patch_embed.parameters():
+        param.requires_grad = False
+    for param in model.encoder.parameters():
+        param.requires_grad = False
+
+    if n_top_layers == -1:
+        # Full unfreeze
+        for param in model.parameters():
+            param.requires_grad = True
+    elif n_top_layers > 0:
+        # Unfreeze top-k layers (layers[-1], layers[-2], ..., layers[-k])
+        k = min(n_top_layers, n_total)
+        try:
+            for layer in model.encoder.layers[-k:]:
+                for param in layer.parameters():
+                    param.requires_grad = True
+        except (AttributeError, TypeError):
+            # Fallback: unfreeze all encoder if layers not indexable
+            for param in model.encoder.parameters():
+                param.requires_grad = True
+    # (n_top_layers == 0 → backbone stays frozen — no action needed)
+
+    # Always keep head trainable
+    for param in model.head.parameters():
+        param.requires_grad = True
+
+    # Rebuild optimizer param groups with updated LRs
+    backbone_params = [p for p in model.parameters()
+                       if p.requires_grad and p not in set(model.head.parameters())]
+    head_params = list(model.head.parameters())
+
+    optimizer.param_groups[0]['params'] = backbone_params
+    optimizer.param_groups[0]['lr']     = lr_backbone
+    optimizer.param_groups[1]['params'] = head_params
+    optimizer.param_groups[1]['lr']     = lr_head
+
+    n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"  [unfreeze] phase: n_top={n_top_layers}, "
+          f"lr_bb={lr_backbone:.1e}, lr_hd={lr_head:.1e}, "
+          f"trainable_params={n_trainable:,}")
 
 
 # ---------------------------------------------------------------------------
@@ -99,38 +194,30 @@ def run_epoch(
     training: bool = True,
     max_batches: int = 0,
     verbose: bool = False,
+    aug_cfg: Optional[dict] = None,
 ) -> float:
     """Run one epoch of training or validation.
 
     Args:
-        model:       PatchTST with ClassificationHead.
-        loader:      DataLoader yielding (batch_x, batch_y).
-        optimizer:   Optimizer (None for validation).
-        criterion:   CrossEntropyLoss with class weights.
-        device:      torch device.
-        clip_norm:   Max gradient norm (1.0 per config).
-        training:    If True, backpropagate and update. If False, eval mode.
-        max_batches: If > 0, stop after this many batches (dry-run).
-        verbose:     Print per-batch progress.
-
-    Returns:
-        Average loss over epoch.
+        aug_cfg: augmentation config dict (applied only during training).
     """
     model.train() if training else model.eval()
+    rng = np.random.default_rng() if training else None
 
     total_loss = 0.0
     n_batches = 0
 
     for batch_idx, (batch_x, batch_y) in enumerate(loader):
-        batch_x = batch_x.to(device)  # (B, 2, 1800)
-        batch_y = batch_y.to(device)  # (B,)
+        batch_x = batch_x.to(device)
+        batch_y = batch_y.to(device)
 
-        # Forward
+        # Augmentation (training only, plan_2 §3.2.1)
+        if training and aug_cfg:
+            batch_x = augment_window(batch_x, aug_cfg, rng)
+
         if training:
-            logits = model(batch_x)  # (B, 2)
+            logits = model(batch_x)
             loss = criterion(logits, batch_y)
-
-            # Backward
             optimizer.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=clip_norm)
@@ -146,12 +233,12 @@ def run_epoch(
         if verbose:
             mode = "train" if training else "val"
             print(f"  [{mode}] batch {batch_idx}/{len(loader)} loss={loss.item():.4f}")
+            import sys; sys.stdout.flush()
 
         if max_batches > 0 and n_batches >= max_batches:
             break
 
-    avg_loss = total_loss / n_batches if n_batches > 0 else 0.0
-    return avg_loss
+    return total_loss / n_batches if n_batches > 0 else 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -273,7 +360,37 @@ def train(
 
     # Class weights (P8 fix: deviation S6.1)
     class_weights = compute_class_weights(train_csv)
-    criterion = nn.CrossEntropyLoss(weight=class_weights.to(device))
+
+    # ---- Loss function (plan_2 §3.2.2) ----------------------------------------
+    loss_type  = str(ftcfg.get("loss", "cross_entropy"))
+    focal_gamma = float(ftcfg.get("focal_gamma", 2.0))
+    label_smooth = float(ftcfg.get("label_smoothing", 0.0))
+    n_cls = int(ftcfg["n_classes"])
+    if loss_type == "focal":
+        criterion = FocalLoss(
+            alpha=class_weights.tolist(),
+            gamma=focal_gamma,
+            label_smoothing=label_smooth,
+            n_classes=n_cls,
+        ).to(device)
+        print(f"[finetune] loss: FocalLoss(gamma={focal_gamma}, label_smoothing={label_smooth})")
+    else:
+        if label_smooth > 0:
+            criterion = nn.CrossEntropyLoss(
+                weight=class_weights.to(device),
+                label_smoothing=label_smooth,
+            )
+        else:
+            criterion = nn.CrossEntropyLoss(weight=class_weights.to(device))
+        print(f"[finetune] loss: CrossEntropyLoss(label_smoothing={label_smooth})")
+
+    # Augmentation config (plan_2 §3.2.1) — active during training only
+    aug_cfg_raw = ftcfg.get("augmentation", {})
+    # Safety: disable Mixup when loss=focal (plan_2 §3.2.1)
+    if loss_type == "focal" and aug_cfg_raw.get("mixup_with_focal", False) is False:
+        aug_cfg_raw = dict(aug_cfg_raw)
+        aug_cfg_raw.pop("mixup", None)
+    do_augment = bool(max_batches == 0 and aug_cfg_raw)  # disable in dry-run
 
     # S13: train_stride=60 (dense) produces ~9,200 windows vs ~630 with stride=900.
     # Augmentation (noise + jitter) adds further variety during training only.
@@ -306,7 +423,6 @@ def train(
     model = PatchTST(cfg)
     load_pretrained_checkpoint(model, pretrain_checkpoint, device)
 
-    # Replace pretrain head with classification head
     d_in = int(cfg["data"]["n_patches"]) * int(cfg["model"]["d_model"]) * int(cfg["data"]["n_channels"])
     model.replace_head(ClassificationHead(
         d_in=d_in,
@@ -317,36 +433,36 @@ def train(
     print(f"[finetune] model: PatchTST + ClassificationHead")
     print(f"[finetune] encoder params: {model.n_encoder_params:,}")
 
-    # ---- Optimizer (Differential LR) -----------------------------------------
-    # Backbone (patch_embed + encoder): lr_backbone = 1e-5
-    # Head (classification): lr_head = 1e-4
+    # ---- Optimizer — 2 param groups (backbone / head) ------------------------
+    # Phase 1 begins with backbone frozen; phases update via apply_unfreeze_phase().
     backbone_params = list(model.patch_embed.parameters()) + list(model.encoder.parameters())
     head_params = list(model.head.parameters())
-
     optimizer = torch.optim.AdamW([
-        {'params': backbone_params, 'lr': float(ftcfg["lr_backbone"])},
-        {'params': head_params, 'lr': float(ftcfg["lr_head"])},
+        {'params': backbone_params, 'lr': 0.0},          # frozen initially
+        {'params': head_params,     'lr': float(ftcfg["lr_head"])},
     ], weight_decay=float(ftcfg["weight_decay"]))
 
-    lr_backbone = optimizer.param_groups[0]['lr']
-    lr_head     = optimizer.param_groups[1]['lr']
-    print(f"[finetune] optimizer: AdamW, lr_backbone={lr_backbone:.2e}, lr_head={lr_head:.2e}")
-
-    # ReduceLROnPlateau (S12): halves both param-group LRs when val_auc stalls.
-    # Outer early-stopping patience=25 is the final guard.
     lr_min    = float(ftcfg.get("lr_min", 1e-7))
     sched_pat = int(ftcfg.get("lr_scheduler_patience", 7))
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="max", factor=0.5, patience=sched_pat,
-        min_lr=lr_min,
+        optimizer, mode="max", factor=0.5, patience=sched_pat, min_lr=lr_min,
     )
-    print(f"[finetune] scheduler: ReduceLROnPlateau(patience={sched_pat}, min_lr={lr_min:.0e})")
 
-    # ---- Warmup config (S14) -------------------------------------------------
-    warmup_epochs = int(ftcfg.get("lr_warmup_epochs", 0))
-    # Store initial target LRs for warmup ramp
-    target_lr_backbone = float(ftcfg["lr_backbone"])
-    target_lr_head     = float(ftcfg["lr_head"])
+    # Progressive unfreezing phases (plan_2 §3.1.1)
+    do_progressive_unfreeze = bool(ftcfg.get("progressive_unfreeze", True))
+    unfreeze_phases = ftcfg.get("unfreeze_phases", [
+        [0,   0,  0.0,    1.0e-3],
+        [5,   1,  1.0e-5, 5.0e-4],
+        [15,  2,  3.0e-5, 3.0e-4],
+        [30, -1,  5.0e-5, 1.0e-4],
+    ])
+    last_phase_key = None   # track phase transitions
+
+    # SWA config (plan_2 §3.1.2)
+    swa_start = int(ftcfg.get("swa_start", 50))
+    swa_end   = int(ftcfg.get("swa_end",   100))
+    swa_accum = SWAAccumulator(model)
+    swa_active = False
 
     # ---- Logging -------------------------------------------------------------
     init_csv_log(log_path)
@@ -356,83 +472,100 @@ def train(
     patience      = int(ftcfg["patience"])
     best_smooth_auc = 0.0
     best_val_auc  = 0.0
-    smooth_auc    = 0.0           # EMA of val_auc (S14)
-    ema_beta      = 0.8           # S14: gentle smoothing (0.8 = 20% weight to current epoch)
+    smooth_auc    = 0.0
+    ema_beta      = 0.8
     patience_ctr  = 0
     verbose       = not quiet
 
-    print(f"[finetune] Starting training: max_epochs={max_epochs}, patience={patience}, "
-          f"warmup={warmup_epochs} epochs, EMA beta={ema_beta}")
+    print(f"[finetune] Starting: max_epochs={max_epochs}, patience={patience}, "
+          f"SWA=[{swa_start},{swa_end}], aug={do_augment}")
 
     for epoch in range(max_epochs):
         t0 = time.time()
 
-        # ---- Warmup: linear ramp LR from 0 → target (S14) -------------------
-        if warmup_epochs > 0 and epoch < warmup_epochs:
-            frac = (epoch + 1) / warmup_epochs
-            optimizer.param_groups[0]['lr'] = target_lr_backbone * frac
-            optimizer.param_groups[1]['lr'] = target_lr_head * frac
+        # Progressive unfreezing: check if phase changed
+        if do_progressive_unfreeze:
+            n_top, lr_bb, lr_hd = get_unfreeze_phase(epoch, unfreeze_phases)
+            phase_key = (n_top, lr_bb, lr_hd)
+            if phase_key != last_phase_key:
+                apply_unfreeze_phase(model, n_top, lr_bb, lr_hd, optimizer,
+                                     weight_decay=float(ftcfg["weight_decay"]))
+                last_phase_key = phase_key
 
         train_loss = run_epoch(
             model, train_loader, optimizer, criterion, device,
             clip_norm=float(ftcfg["gradient_clip"]),
             training=True, max_batches=max_batches, verbose=verbose,
+            aug_cfg=aug_cfg_raw if do_augment else None,
         )
 
-        # Validate: per-recording AUC (P7 fix)
-        # val_stride=60 (15-sec step) gives 286 windows/recording vs 14 with stride=900,
-        # producing a much more stable AUC signal for model selection (S12 improvement).
-        # stride=1 is reserved ONLY for final evaluation (Step 7 / 05_evaluation.ipynb).
         stride_val = int(ftcfg.get("val_stride", 60)) if max_batches == 0 else 60
         val_auc = compute_recording_auc(
             model, val_csv, processed_root, stride=stride_val, device=device_str
         )
 
-        # EMA smoothing of val_auc (S14: reduces noisy early-stopping)
-        if epoch == 0:
-            smooth_auc = val_auc
-        else:
-            smooth_auc = ema_beta * smooth_auc + (1 - ema_beta) * val_auc
+        smooth_auc = val_auc if epoch == 0 else ema_beta * smooth_auc + (1 - ema_beta) * val_auc
+        scheduler.step(smooth_auc)
 
-        # Scheduler: skip during warmup, step on smooth_auc after warmup (S14)
-        if epoch >= warmup_epochs:
-            scheduler.step(smooth_auc)
+        # SWA accumulation window
+        if swa_start <= epoch < swa_end:
+            swa_accum.update(model)
+            if not swa_active:
+                swa_active = True
+                print(f"  [SWA] Window started (epochs {swa_start}-{swa_end})")
 
         lr_backbone = optimizer.param_groups[0]['lr']
         lr_head     = optimizer.param_groups[1]['lr']
         elapsed     = time.time() - t0
-        warmup_tag  = " [warmup]" if warmup_epochs > 0 and epoch < warmup_epochs else ""
+        swa_tag     = f" [SWA n={swa_accum.n_collected}]" if swa_active else ""
         print(
             f"[epoch {epoch:03d}] train_loss={train_loss:.6f}  "
-            f"val_auc={val_auc:.6f}  smooth_auc={smooth_auc:.6f}  "
-            f"lr_bb={lr_backbone:.2e}  lr_hd={lr_head:.2e}  ({elapsed:.1f}s){warmup_tag}"
+            f"val_auc={val_auc:.6f}  smooth={smooth_auc:.6f}  "
+            f"lr_bb={lr_backbone:.2e}  lr_hd={lr_head:.2e}  "
+            f"({elapsed:.1f}s){swa_tag}"
         )
+        import sys; sys.stdout.flush()
         append_csv_log(log_path, epoch, train_loss, val_auc, smooth_auc, lr_backbone, lr_head)
 
-        # Checkpoint every epoch
         save_checkpoint(model, Path(checkpoint_dir) / f"epoch_{epoch:03d}.pt")
 
-        # Best model + early stopping (based on smooth_auc — S14)
         if smooth_auc > best_smooth_auc:
             best_smooth_auc = smooth_auc
             best_val_auc = max(best_val_auc, val_auc)
             patience_ctr = 0
             save_checkpoint(model, Path(checkpoint_dir) / "best_finetune.pt")
-            print(f"  [OK] New best smooth_auc={best_smooth_auc:.6f} (raw={val_auc:.6f}) - saved best_finetune.pt")
+            print(f"  [OK] New best smooth_auc={best_smooth_auc:.6f} "
+                  f"(raw={val_auc:.6f}) — saved best_finetune.pt")
         else:
             patience_ctr += 1
             print(f"  No improvement ({patience_ctr}/{patience})")
             if patience_ctr >= patience:
-                print(f"[finetune] Early stopping at epoch {epoch} "
-                      f"(patience={patience} exhausted)")
+                print(f"[finetune] Early stopping at epoch {epoch}")
                 break
 
-        # Dry-run: stop after first epoch if max_batches is set
         if max_batches > 0:
-            print("[finetune] Dry-run complete - stopping after 1 epoch.")
+            print("[finetune] Dry-run complete — stopping after 1 epoch.")
             break
 
-    print(f"[finetune] Finished. Best smooth_auc={best_smooth_auc:.6f} (best raw val_auc={best_val_auc:.6f})")
+    # ---- SWA finalization (plan_2 §3.1.2) ------------------------------------
+    if swa_accum.n_collected > 0:
+        print(f"\n[SWA] Finalizing: averaging {swa_accum.n_collected} checkpoints...")
+        swa_model = swa_accum.average(model, device)
+        print("[SWA] Running BN recalibration (required — plan_2 §3.1.2)...")
+        swa_accum.recalibrate_bn(swa_model, train_loader, device,
+                                 max_batches=0 if max_batches == 0 else 2)
+        swa_val_auc = compute_recording_auc(
+            swa_model, val_csv, processed_root, stride=stride_val, device=device_str
+        )
+        print(f"[SWA] swa_val_auc={swa_val_auc:.6f}  best_regular={best_smooth_auc:.6f}")
+        if swa_val_auc > best_smooth_auc:
+            save_checkpoint(swa_model, Path(checkpoint_dir) / "best_finetune.pt")
+            print(f"  [SWA] SWA model is BETTER → overwrote best_finetune.pt")
+        save_checkpoint(swa_model, Path(checkpoint_dir) / "swa_model.pt")
+        print(f"  [SWA] Saved swa_model.pt")
+
+    print(f"\n[finetune] Finished. Best smooth_auc={best_smooth_auc:.6f} "
+          f"(best raw={best_val_auc:.6f})")
     print(f"[finetune] Checkpoints: {checkpoint_dir}/")
     print(f"[finetune] Loss log:     {log_path}")
 
