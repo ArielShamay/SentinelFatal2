@@ -315,7 +315,7 @@ def train(
     pretrain_checkpoint: Optional[str] = None,
     checkpoint_dir: str = "checkpoints/finetune",
     log_path: str = "logs/finetune_loss.csv",
-    quiet: bool = False,
+    quiet: bool = True,
     config_overrides: Optional[dict] = None,
     save_epoch_ckpts: bool = True,
 ) -> None:
