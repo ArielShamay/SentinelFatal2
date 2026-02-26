@@ -316,6 +316,7 @@ def train(
     checkpoint_dir: str = "checkpoints/finetune",
     log_path: str = "logs/finetune_loss.csv",
     quiet: bool = False,
+    config_overrides: Optional[dict] = None,
 ) -> None:
     """Full fine-tuning loop.
 
@@ -330,9 +331,21 @@ def train(
         checkpoint_dir:       Directory to save checkpoints.
         log_path:             Path to loss CSV log.
         quiet:                Suppress per-batch prints.
+        config_overrides:     Optional flat dict of config values to override.
+                              Keys matching 'model' section (d_model, n_layers, etc.)
+                              are applied to cfg['model']; all others to cfg['finetune'].
     """
+    _MODEL_KEYS = {'d_model', 'n_layers', 'n_heads', 'dropout', 'patch_len', 'stride',
+                   'n_patches', 'd_ff', 'activation', 'norm', 'n_channels'}
+
     # ---- Setup ---------------------------------------------------------------
     cfg = load_config(config_path)
+    if config_overrides:
+        for k, v in config_overrides.items():
+            if k in _MODEL_KEYS:
+                cfg.setdefault('model', {})[k] = v
+            else:
+                cfg.setdefault('finetune', {})[k] = v
     seed = int(cfg.get("seed", 42))
     random.seed(seed)
     np.random.seed(seed)
