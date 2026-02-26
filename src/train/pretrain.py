@@ -323,6 +323,9 @@ def pretrain(
     if pretrain_csv is None:
         pretrain_csv = project_root / "data" / "splits" / "pretrain.csv"
 
+    import os as _os
+    _n_workers = min(2, _os.cpu_count() or 0)  # 2 workers on Colab T4; 0 on Windows
+    _pin_mem   = torch.cuda.is_available()
     train_loader, val_loader = build_pretrain_loaders(
         pretrain_csv=pretrain_csv,
         processed_root=processed_root,
@@ -330,7 +333,8 @@ def pretrain(
         stride=int(ptcfg["window_stride"]),
         batch_size=bs,
         val_fraction=0.1,
-        num_workers=0,
+        num_workers=_n_workers,
+        pin_memory=_pin_mem,
         seed=seed,
     )
     print(f"[pretrain] dataset - train windows={len(train_loader.dataset)}, "
