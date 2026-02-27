@@ -258,6 +258,38 @@ def _ensure_data_asset(ml_client) -> str:
     return f"{data_name}:{registered.version}"
 
 
+def _build_code_snapshot() -> str:
+    """Create a minimal temp directory with ONLY the files needed on the compute node.
+
+    The compute node needs: src/, azure_ml/, scripts/, config/, data/splits/.
+    Everything else (data/, checkpoints/, docs/, notebooks/, etc.) is excluded.
+    Returns the path to the temp directory.
+    """
+    import shutil
+    import tempfile
+
+    tmp = Path(tempfile.mkdtemp(prefix="sentinelfatal2_code_"))
+    print(f"[CODE] Building minimal code snapshot in {tmp} ...")
+
+    needed_dirs = ["src", "azure_ml", "scripts", "config"]
+    for d in needed_dirs:
+        src_path = REPO_ROOT / d
+        if src_path.exists():
+            shutil.copytree(str(src_path), str(tmp / d))
+            print(f"[CODE]   + {d}/")
+
+    # data/splits/ is required (small CSV files, 124 KB total)
+    splits_src = REPO_ROOT / "data" / "splits"
+    splits_dst = tmp / "data" / "splits"
+    if splits_src.exists():
+        shutil.copytree(str(splits_src), str(splits_dst))
+        print(f"[CODE]   + data/splits/")
+
+    total_mb = sum(f.stat().st_size for f in tmp.rglob("*") if f.is_file()) / (1024 * 1024)
+    print(f"[CODE] Snapshot ready: {total_mb:.1f} MB  (was >600 MB with full repo)")
+    return str(tmp)
+
+
 def _submit_job(ml_client, env_ref: str, data_ref: str, low_priority: bool):
     """Define and submit the training command job."""
     from azure.ai.ml import command, Input, Output
@@ -265,8 +297,10 @@ def _submit_job(ml_client, env_ref: str, data_ref: str, low_priority: bool):
 
     print("\n[JOB] Building job definition ...")
 
+    code_dir = _build_code_snapshot()  # minimal ~1 MB snapshot
+
     job = command(
-        code=str(REPO_ROOT),          # uploads repo source code (~50 MB, data excluded by .amlignore)
+        code=code_dir,                # uploads only src/ + azure_ml/ + scripts/ + config/ + data/splits/
         command="python azure_ml/train_azure.py --data ${{inputs.data}}",
         inputs={
             "data": Input(
