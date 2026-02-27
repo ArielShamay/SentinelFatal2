@@ -187,28 +187,26 @@ def _ensure_compute(ml_client, tier: str):
 
 
 def _ensure_environment(ml_client):
-    """Register the conda-based training environment."""
+    """Register (or update) the conda-based training environment.
+
+    Always calls create_or_update so that changes to conda_env.yml are
+    picked up automatically — Azure ML creates a new version only when
+    the content hash differs.
+    """
     from azure.ai.ml.entities import Environment
 
     env_name = "sentinelfatal2-env"
     conda_yml = REPO_ROOT / "azure_ml" / "conda_env.yml"
 
-    try:
-        existing = ml_client.environments.get(env_name, label="latest")
-        print(f"[ENV] Environment '{env_name}' already registered (version {existing.version}).")
-        return f"{env_name}@latest"
-    except Exception:
-        pass
-
-    print(f"[ENV] Registering environment '{env_name}' ...")
+    print(f"[ENV] Registering/updating environment '{env_name}' ...")
     env = Environment(
         name=env_name,
         image=BASE_IMAGE,
         conda_file=str(conda_yml),
-        description="SentinelFatal2 training: PyTorch 2.2 + CUDA 11.8",
+        description="SentinelFatal2 training: PyTorch 2.2+cu118 / NumPy<2 / CUDA 11.8",
     )
     registered = ml_client.environments.create_or_update(env)
-    print(f"[ENV] Registered version {registered.version}.")
+    print(f"[ENV] Environment '{env_name}' version {registered.version} ready.")
     return f"{env_name}:{registered.version}"
 
 
