@@ -66,27 +66,30 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _get_credential():
-    """Try VS Code / Azure CLI credential first, fall back to browser login."""
+    """Try Azure CLI → VS Code → browser login, in that order."""
     from azure.identity import (
-        ChainedTokenCredential,
         AzureCliCredential,
         VisualStudioCodeCredential,
         InteractiveBrowserCredential,
     )
-    try:
-        cred = ChainedTokenCredential(
-            VisualStudioCodeCredential(),
-            AzureCliCredential(),
-        )
-        # Try to get a token to verify it works
-        cred.get_token("https://management.azure.com/.default")
-        print("[AUTH] Authenticated via VS Code / Azure CLI credential.")
-        return cred
-    except Exception as e:
-        print(f"[AUTH] Chained credential failed ({e}). Opening browser login ...")
-        return InteractiveBrowserCredential(
-            tenant_id="90373b7d-e0f5-41f4-bf72-c3c39a38bc80"
-        )
+    SCOPE = "https://management.azure.com/.default"
+
+    for name, cred_cls, kwargs in [
+        ("Azure CLI",  AzureCliCredential,         {}),
+        ("VS Code",    VisualStudioCodeCredential,  {}),
+    ]:
+        try:
+            cred = cred_cls(**kwargs)
+            cred.get_token(SCOPE)
+            print(f"[AUTH] Authenticated via {name}.")
+            return cred
+        except Exception as e:
+            print(f"[AUTH] {name} credential failed: {e}")
+
+    print("[AUTH] Opening browser login ...")
+    return InteractiveBrowserCredential(
+        tenant_id="90373b7d-e0f5-41f4-bf72-c3c39a38bc80"
+    )
 
 
 def _ensure_resource_group(credential) -> None:
@@ -210,16 +213,58 @@ def _ensure_environment(ml_client):
     return f"{env_name}:{registered.version}"
 
 
-def _submit_job(ml_client, env_ref: str, low_priority: bool):
+def _ensure_data_asset(ml_client) -> str:
+    """Upload data_processed.zip to Azure Blob as a registered Data Asset.
+
+    Returns 'ctg-processed:<version>' reference string.
+    Skips upload if the asset is already registered (idempotent).
+    """
+    from azure.ai.ml.entities import Data
+    from azure.ai.ml.constants import AssetTypes
+
+    data_name = "ctg-processed"
+    zip_path  = REPO_ROOT / "data_processed.zip"
+
+    # Check if already registered
+    try:
+        existing = ml_client.data.get(data_name, label="latest")
+        print(f"[DATA] Data asset '{data_name}' already registered "
+              f"(version {existing.version}) — skipping upload.")
+        return f"{data_name}:{existing.version}"
+    except Exception:
+        pass
+
+    size_mb = zip_path.stat().st_size // (1024 * 1024)
+    print(f"[DATA] Uploading {zip_path.name} ({size_mb} MB) to Azure Blob ...")
+    data = Data(
+        path=str(zip_path),
+        type=AssetTypes.URI_FILE,
+        description="Preprocessed CTG .npy files for SentinelFatal2 training (552 recordings)",
+        name=data_name,
+        version="1",
+    )
+    registered = ml_client.data.create_or_update(data)
+    print(f"[DATA] Registered: '{data_name}' version {registered.version}")
+    return f"{data_name}:{registered.version}"
+
+
+def _submit_job(ml_client, env_ref: str, data_ref: str, low_priority: bool):
     """Define and submit the training command job."""
-    from azure.ai.ml import command, Output
+    from azure.ai.ml import command, Input, Output
     from azure.ai.ml.constants import AssetTypes
 
     print("\n[JOB] Building job definition ...")
 
     job = command(
-        code=str(REPO_ROOT),          # uploads entire repo directory as code asset
-        command="python azure_ml/train_azure.py",
+        code=str(REPO_ROOT),          # uploads repo source code (~50 MB, data excluded by .amlignore)
+        command="python azure_ml/train_azure.py --data ${{inputs.data}}",
+        inputs={
+            "data": Input(
+                type=AssetTypes.URI_FILE,
+                path=f"azureml:{data_ref}",
+                mode="download",      # Azure ML copies zip to local SSD before job starts
+            ),
+        },
         environment=env_ref,
         compute=COMPUTE_NAME,
         display_name="SentinelFatal2-E2E-CV-v3",
@@ -338,6 +383,9 @@ def main():
     # ── Environment ────────────────────────────────────────────────────────
     env_ref = _ensure_environment(ml_client)
 
+    # ── Data Asset (upload data_processed.zip once to Azure Blob) ──────────
+    data_ref = _ensure_data_asset(ml_client)
+
     if args.dry_run:
         print("\n[DRY-RUN] Infrastructure ready. Skipping job submission.")
         return
@@ -350,7 +398,7 @@ def main():
         return
 
     # ── Submit + auto-stream ────────────────────────────────────────────────
-    job = _submit_job(ml_client, env_ref, low_priority=not args.dedicated)
+    job = _submit_job(ml_client, env_ref, data_ref, low_priority=not args.dedicated)
     _stream_job(ml_client, job.name)
 
 

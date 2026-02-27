@@ -5,7 +5,8 @@ azure_ml/train_azure.py
 Entrypoint that runs INSIDE the Azure ML compute node.
 
 What this script does:
-  1. Downloads processed CTG data from GitHub (if the .npy files are missing)
+  1. Gets processed CTG data — either from an Azure ML Data Asset input (fast,
+     same-region Blob download) or falls back to downloading from GitHub.
   2. Applies all fixes from docs/new_training_spec.md (Config A, num_workers=0,
      val_every_n_epochs=5, resume_from_epoch, per_epoch_callback, patience=15)
   3. Runs the full 5-Fold E2E Cross-Validation
@@ -13,10 +14,14 @@ What this script does:
 
 Azure ML mounts the repo code at the working directory (current dir = repo root).
 Outputs are written to $AZUREML_OUTPUT_results, $AZUREML_OUTPUT_checkpoints, etc.
+
+Usage (Azure ML passes --data automatically from the job input):
+    python azure_ml/train_azure.py --data /path/to/data_processed.zip
 """
 
 from __future__ import annotations
 
+import argparse
 import gc
 import inspect
 import os
@@ -31,7 +36,13 @@ REPO_DIR = Path(os.getcwd()).resolve()
 print(f"[INIT] repo root: {REPO_DIR}")
 print(f"[INIT] Python   : {sys.version}")
 
-# ── 1. Download processed data if missing ─────────────────────────────────
+# ── 1. Get processed data ──────────────────────────────────────────────────
+# Parse --data argument (Azure ML passes the downloaded zip path here)
+_ap = argparse.ArgumentParser(add_help=False)
+_ap.add_argument("--data", default=None,
+                 help="Local path to data_processed.zip (provided by Azure ML data input)")
+_args, _ = _ap.parse_known_args()
+
 DATA_ZIP_URL = (
     "https://raw.githubusercontent.com/ArielShamay/SentinelFatal2/master/data_processed.zip"
 )
@@ -46,15 +57,26 @@ def _count_npy(directory: Path) -> int:
 
 npy_count = _count_npy(CTU_DIR)
 if npy_count < 552:
-    print(f"[DATA] Only {npy_count} .npy files found — downloading data_processed.zip ...")
-    zip_path = Path("/tmp/data_processed.zip")
-    subprocess.check_call(["wget", "-q", "-O", str(zip_path), DATA_ZIP_URL])
-    subprocess.check_call(["unzip", "-q", str(zip_path), "-d", str(REPO_DIR / "data")])
-    zip_path.unlink(missing_ok=True)
+    if _args.data:
+        # Azure ML Data Asset: zip was downloaded to a local path before the job started
+        zip_path = Path(_args.data)
+        print(f"[DATA] Using Azure ML data input: {zip_path}  "
+              f"({zip_path.stat().st_size // (1024*1024)} MB)")
+    else:
+        # Fallback: download from GitHub
+        print(f"[DATA] --data not provided; downloading data_processed.zip from GitHub ...")
+        zip_path = Path("/tmp/data_processed.zip")
+        subprocess.check_call(["wget", "-q", "-O", str(zip_path), DATA_ZIP_URL])
+
+    print(f"[DATA] Extracting {zip_path.name} ...")
+    subprocess.check_call(["unzip", "-q", "-o", str(zip_path), "-d", str(REPO_DIR / "data")])
+    if not _args.data:
+        zip_path.unlink(missing_ok=True)
+
     npy_count = _count_npy(CTU_DIR)
-    print(f"[DATA] After download: {npy_count} .npy files.")
+    print(f"[DATA] {npy_count} .npy files ready.")
 else:
-    print(f"[DATA] {npy_count} .npy files present — skipping download.")
+    print(f"[DATA] {npy_count} .npy files present — skipping extraction.")
 
 # ── 2. Add repo to Python path ─────────────────────────────────────────────
 if str(REPO_DIR) not in sys.path:
