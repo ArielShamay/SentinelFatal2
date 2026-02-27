@@ -66,29 +66,39 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _get_credential():
-    """Try Azure CLI → VS Code → browser login, in that order."""
+    """Try Azure CLI → VS Code (with timeout) → DeviceCode fallback."""
+    import concurrent.futures
     from azure.identity import (
         AzureCliCredential,
         VisualStudioCodeCredential,
-        InteractiveBrowserCredential,
+        DeviceCodeCredential,
     )
     SCOPE = "https://management.azure.com/.default"
+    TIMEOUT = 20  # seconds to wait before giving up on a credential
 
     for name, cred_cls, kwargs in [
-        ("Azure CLI",  AzureCliCredential,         {}),
-        ("VS Code",    VisualStudioCodeCredential,  {}),
+        ("Azure CLI", AzureCliCredential,        {}),
+        ("VS Code",   VisualStudioCodeCredential, {}),
     ]:
         try:
             cred = cred_cls(**kwargs)
-            cred.get_token(SCOPE)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                future = ex.submit(cred.get_token, SCOPE)
+                future.result(timeout=TIMEOUT)
             print(f"[AUTH] Authenticated via {name}.")
             return cred
+        except concurrent.futures.TimeoutError:
+            print(f"[AUTH] {name} credential timed out after {TIMEOUT}s.")
         except Exception as e:
             print(f"[AUTH] {name} credential failed: {e}")
 
-    print("[AUTH] Opening browser login ...")
-    return InteractiveBrowserCredential(
-        tenant_id="90373b7d-e0f5-41f4-bf72-c3c39a38bc80"
+    # Device-code flow: prints a URL + 8-char code to the terminal.
+    # Open the URL in any browser, enter the code, and this process will continue.
+    print("\n[AUTH] === DEVICE CODE LOGIN ===")
+    print("[AUTH] A URL and code will appear below. Open the URL in your browser")
+    print("[AUTH] and enter the code to authenticate. The script will wait.\n")
+    return DeviceCodeCredential(
+        tenant_id="90373b7d-e0f5-41f4-bf72-c3c39a38bc80",
     )
 
 
