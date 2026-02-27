@@ -1,39 +1,53 @@
 # Azure ML code upload ignore file (like .gitignore but for az ml job submissions)
-# Excludes large/generated files that should NOT be uploaded as code assets.
+# Goal: upload ONLY src/, azure_ml/, scripts/, config/, data/splits/ (~1 MB total).
+# Everything else is either too large or not needed on the compute node.
 
-# Processed data - large .npy files (~1.7 GB), downloaded at runtime by train_azure.py
+# ── All data subdirectories except data/splits/ ───────────────────────────
+# data/splits/ is small (124 KB) and required by train_azure.py for sanity checks.
 data/processed/
 data/raw/
+data/FHRMA-master/
+data/CTGDL/
+data/ctu-chb-intrapartum-cardiotocography-database-1.0.0/
 
-# Git internals
+# data_processed.zip is now a registered Azure ML Data Asset (ctg-processed:1).
+# The compute node receives it via --data arg, not from the code snapshot.
+data_processed.zip
+
+# ── Training outputs ──────────────────────────────────────────────────────
+checkpoints/
+results/
+logs/
+
+# ── Docs, notebooks, assets (not needed on compute) ─────────────────────
+docs/
+notebooks/
+assets/
+kaggle_kernel/
+SentinelFatal2/
+_edit_notebook.py
+
+# ── Git internals ─────────────────────────────────────────────────────────
 .git/
 
-# Python virtualenv
+# ── Python virtualenv ─────────────────────────────────────────────────────
 .venv/
 venv/
 env/
 
-# Python bytecode
+# ── Python bytecode ───────────────────────────────────────────────────────
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 
-# Training outputs - not needed as code
-checkpoints/
-results/
-logs/
-
-# Notebooks - not needed on compute node
-notebooks/
-
-# IDE / OS noise
+# ── IDE / OS noise ────────────────────────────────────────────────────────
 .vscode/
 .idea/
 *.DS_Store
 Thumbs.db
 
-# Temp files
+# ── Temp / log files ──────────────────────────────────────────────────────
 *.tmp
 *.log
 debug.log
