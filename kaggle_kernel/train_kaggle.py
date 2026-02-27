@@ -30,10 +30,9 @@ else:
 print(f"[REPO] Ready at {REPO_DIR}")
 
 # ── 2. Install dependencies ────────────────────────────────────────────────
-print("[DEPS] Installing dependencies ...")
+print("[DEPS] Installing missing dependencies (keeping Kaggle's torch) ...")
 subprocess.check_call([
     sys.executable, "-m", "pip", "install", "-q",
-    "torch==2.2.0",
     "scikit-learn>=1.3",
     "pandas>=2.0",
     "PyYAML>=6.0",
@@ -41,16 +40,17 @@ subprocess.check_call([
 ])
 print("[DEPS] Done.")
 
-# ── 3. Switch working directory to repo root ───────────────────────────────
-os.chdir(str(REPO_DIR))
-if str(REPO_DIR) not in sys.path:
-    sys.path.insert(0, str(REPO_DIR))
-
-print(f"[CWD] {os.getcwd()}")
-
-# ── 4. Run the training script ─────────────────────────────────────────────
+# ── 3. Run the training script via subprocess (clean process, correct cwd) ─
 train_script = REPO_DIR / "azure_ml" / "train_azure.py"
 print(f"[RUN] Executing {train_script} ...")
 print("=" * 60)
+sys.stdout.flush()
 
-exec(train_script.read_text(), {"__name__": "__main__", "__file__": str(train_script)})
+result = subprocess.run(
+    [sys.executable, str(train_script)],
+    cwd=str(REPO_DIR),
+    check=False,          # handle error ourselves so we see it
+)
+if result.returncode != 0:
+    print(f"\n[ERROR] train_azure.py exited with code {result.returncode}")
+    sys.exit(result.returncode)
