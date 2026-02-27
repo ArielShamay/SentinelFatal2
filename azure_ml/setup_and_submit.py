@@ -271,26 +271,39 @@ def _submit_job(ml_client, env_ref: str, low_priority: bool):
     return returned_job
 
 
-def _monitor_job(ml_client, job_name: str):
-    """Poll job status until terminal state."""
-    terminal_states = {"Completed", "Failed", "Canceled", "NotResponding"}
-    print(f"\n[MONITOR] Watching job '{job_name}' (Ctrl+C to stop watching) ...")
-    while True:
+def _stream_job(ml_client, job_name: str):
+    """Stream job logs in real-time to the VS Code terminal."""
+    print(f"\n[STREAM] Waiting for job '{job_name}' to start ...")
+    print(f"[STREAM] Logs will appear here as the job runs. Press Ctrl+C to detach.\n")
+
+    # Wait until job leaves Queued/Starting state before streaming
+    for _ in range(60):  # up to 10 min
         job = ml_client.jobs.get(job_name)
-        ts = time.strftime("%H:%M:%S")
-        print(f"  [{ts}] Status: {job.status}")
-        if job.status in terminal_states:
-            print(f"\n[MONITOR] Job reached terminal state: {job.status}")
-            if job.status == "Completed":
-                print(f"[MONITOR] Studio URL: {job.studio_url}")
-                print("[MONITOR] Download outputs with:")
-                print(f"  az ml job download --name {job_name} --output-name results "
-                      f"--download-path ./results/azure_run/")
-            elif job.status == "Failed":
-                print("\n[MONITOR] Job FAILED. Check logs in Azure ML Studio:")
-                print(f"  {job.studio_url}")
+        if job.status not in ("Queued", "NotStarted"):
             break
-        time.sleep(30)
+        print(f"  [STATUS] {job.status} — waiting for compute node ...")
+        time.sleep(10)
+
+    try:
+        # ml_client.jobs.stream() streams stdout/stderr in real-time
+        ml_client.jobs.stream(job_name)
+    except KeyboardInterrupt:
+        print("\n[STREAM] Detached (Ctrl+C). Job continues running in Azure ML.")
+        job = ml_client.jobs.get(job_name)
+        print(f"[STREAM] Current status: {job.status}")
+        print(f"[STREAM] Studio URL: {job.studio_url}")
+        print(f"\nTo re-attach:\n  python azure_ml/setup_and_submit.py --monitor --job-name {job_name}")
+        return
+
+    job = ml_client.jobs.get(job_name)
+    print(f"\n[DONE] Job final status: {job.status}")
+    if job.status == "Completed":
+        print(f"[DONE] Studio URL: {job.studio_url}")
+        print("[DONE] Download results with:")
+        print(f"  az ml job download --name {job_name} --output-name results "
+              f"--download-path ./results/azure_run/")
+    elif job.status == "Failed":
+        print(f"[FAILED] Check full logs: {job.studio_url}")
 
 
 def main():
@@ -335,16 +348,12 @@ def main():
         if not args.job_name:
             print("[ERROR] --monitor requires --job-name <name>")
             sys.exit(1)
-        _monitor_job(ml_client, args.job_name)
+        _stream_job(ml_client, args.job_name)
         return
 
-    # ── Submit ─────────────────────────────────────────────────────────────
+    # ── Submit + auto-stream ────────────────────────────────────────────────
     job = _submit_job(ml_client, env_ref, low_priority=not args.dedicated)
-
-    # Optionally monitor
-    answer = input("\nMonitor job in this terminal? [y/N]: ").strip().lower()
-    if answer == "y":
-        _monitor_job(ml_client, job.name)
+    _stream_job(ml_client, job.name)
 
 
 if __name__ == "__main__":
