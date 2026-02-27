@@ -1,0 +1,39 @@
+# Azure ML code upload ignore file (like .gitignore but for az ml job submissions)
+# Excludes large/generated files that should NOT be uploaded as code assets.
+
+# Processed data - large .npy files (~1.7 GB), downloaded at runtime by train_azure.py
+data/processed/
+data/raw/
+
+# Git internals
+.git/
+
+# Python virtualenv
+.venv/
+venv/
+env/
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Training outputs - not needed as code
+checkpoints/
+results/
+logs/
+
+# Notebooks - not needed on compute node
+notebooks/
+
+# IDE / OS noise
+.vscode/
+.idea/
+*.DS_Store
+Thumbs.db
+
+# Temp files
+*.tmp
+*.log
+debug.log
