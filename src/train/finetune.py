@@ -417,9 +417,8 @@ def train(
     val_stride_ds   = int(ftcfg.get("window_stride", cfg["pretrain"]["window_stride"]))
     train_stride_ds = int(ftcfg.get("train_stride", val_stride_ds))
     do_augment      = (max_batches == 0)  # disable during dry-run for speed
-    import os as _os
-    _n_workers = min(2, _os.cpu_count() or 0)  # 2 workers on Colab T4; 0 on Windows (fork issues)
-    _pin_mem   = torch.cuda.is_available()
+    _n_workers = 0     # spec Rule 3: always 0 to prevent SWA+DataLoader deadlock
+    _pin_mem   = False
     train_loader, val_loader = build_finetune_loaders(
         train_csv=train_csv,
         val_csv=val_csv,
