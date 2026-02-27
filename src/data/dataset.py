@@ -155,7 +155,6 @@ def build_pretrain_loaders(
     batch_size: int = 64,
     val_fraction: float = 0.1,
     num_workers: int = 0,
-    pin_memory: bool = False,
     seed: int = 42,
 ) -> Tuple[DataLoader, DataLoader]:
     """Build train and validation DataLoaders for pre-training.
@@ -187,11 +186,11 @@ def build_pretrain_loaders(
 
     train_loader = DataLoader(
         train_ds, batch_size=batch_size, shuffle=True,
-        num_workers=num_workers, pin_memory=pin_memory, drop_last=True,
+        num_workers=num_workers, pin_memory=False, drop_last=True,
     )
     val_loader = DataLoader(
         val_ds, batch_size=batch_size, shuffle=False,
-        num_workers=num_workers, pin_memory=pin_memory, drop_last=False,
+        num_workers=num_workers, pin_memory=False, drop_last=False,
     )
     return train_loader, val_loader
 
@@ -350,10 +349,10 @@ def build_finetune_loaders(
 
     train_loader = DataLoader(
         train_ds, batch_size=batch_size, shuffle=True,
-        num_workers=num_workers, pin_memory=pin_memory, drop_last=True,
+        num_workers=num_workers, pin_memory=False, drop_last=True,
     )
     val_loader = DataLoader(
         val_ds, batch_size=batch_size, shuffle=False,
-        num_workers=num_workers, pin_memory=pin_memory, drop_last=False,
+        num_workers=num_workers, pin_memory=False, drop_last=False,
     )
     return train_loader, val_loader

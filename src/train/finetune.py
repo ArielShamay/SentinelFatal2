@@ -318,6 +318,10 @@ def train(
     quiet: bool = True,
     config_overrides: Optional[dict] = None,
     save_epoch_ckpts: bool = True,
+    val_every_n_epochs: int = 1,
+    resume_from_epoch: int = 0,
+    per_epoch_callback=None,
+    resume_checkpoint: Optional[str] = None,
 ) -> None:
     """Full fine-tuning loop.
 
@@ -453,6 +457,16 @@ def train(
     print(f"[finetune] model: PatchTST + ClassificationHead")
     print(f"[finetune] encoder params: {model.n_encoder_params:,}")
 
+    # ---- Resume from epoch checkpoint (Section 3.5) -------------------------
+    if resume_checkpoint is not None:
+        _res_path = Path(resume_checkpoint)
+        if _res_path.exists():
+            _res_state = torch.load(_res_path, map_location=device)
+            model.load_state_dict(_res_state, strict=True)
+            print(f"[finetune] Resumed model weights from: {_res_path}")
+        else:
+            print(f"[finetune] WARNING: resume_checkpoint not found: {_res_path} — starting fresh")
+
     # ---- Optimizer — 2 param groups (backbone / head) ------------------------
     # Phase 1 begins with backbone frozen; phases update via apply_unfreeze_phase().
     backbone_params = list(model.patch_embed.parameters()) + list(model.encoder.parameters())
@@ -498,9 +512,14 @@ def train(
     verbose       = not quiet
 
     print(f"[finetune] Starting: max_epochs={max_epochs}, patience={patience}, "
-          f"SWA=[{swa_start},{swa_end}], aug={do_augment}")
+          f"SWA=[{swa_start},{swa_end}], aug={do_augment}, "
+          f"resume_from={resume_from_epoch}, val_every_n={val_every_n_epochs}")
 
-    for epoch in range(max_epochs):
+    # stride_val defined here so SWA finalization (outside loop) can use it
+    stride_val   = int(ftcfg.get("val_stride", 60)) if max_batches == 0 else 60
+    prev_val_auc = 0.0  # carry-forward AUC on skipped validation epochs
+
+    for epoch in range(resume_from_epoch, max_epochs):
         t0 = time.time()
 
         # Progressive unfreezing: check if phase changed
@@ -519,10 +538,14 @@ def train(
             aug_cfg=aug_cfg_raw if do_augment else None,
         )
 
-        stride_val = int(ftcfg.get("val_stride", 60)) if max_batches == 0 else 60
-        val_auc = compute_recording_auc(
-            model, val_csv, processed_root, stride=stride_val, device=device_str
-        )
+        # val_every_n_epochs: skip expensive AUC on non-multiple epochs (Section 3.5)
+        if val_every_n_epochs > 1 and (epoch % val_every_n_epochs) != 0:
+            val_auc = prev_val_auc  # carry forward last AUC without re-computing
+        else:
+            val_auc = compute_recording_auc(
+                model, val_csv, processed_root, stride=stride_val, device=device_str
+            )
+        prev_val_auc = val_auc
 
         smooth_auc = val_auc if epoch == 0 else ema_beta * smooth_auc + (1 - ema_beta) * val_auc
         scheduler.step(smooth_auc)
@@ -563,6 +586,10 @@ def train(
             if patience_ctr >= patience:
                 print(f"[finetune] Early stopping at epoch {epoch}")
                 break
+
+        # per_epoch_callback hook (Section 3.5): prune checkpoints, timeout guard, etc.
+        if per_epoch_callback is not None:
+            per_epoch_callback(epoch, float(train_loss), float(val_auc))
 
         if max_batches > 0:
             print("[finetune] Dry-run complete — stopping after 1 epoch.")
