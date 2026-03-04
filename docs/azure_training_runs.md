@@ -688,6 +688,278 @@ PYTHONUNBUFFERED=1 PYTHONIOENCODING=utf-8 python -u azure_ml/setup_and_submit.py
 
 ---
 
+## 12. נספח — פרטים טכניים מלאים (שאלות ותשובות)
+
+> **מטרה:** תשובות מדויקות לשאלות טכניות שנדרשות לתכנון v7.
+> כל התשובות מאומתות ישירות מהקוד (ולא מהערכות).
+
+---
+
+### ש1 — מהם בדיוק 12 הפיצ'רים של ה-LR?
+
+**קוד:** `src/inference/alert_extractor.py` → `extract_recording_features()`
+
+**חשוב:** יש **שני סוגי פיצ'רים** — פיצ'רים של **ה-segment הארוך ביותר** ופיצ'רים של **ההקלטה כולה**.
+
+| # | שם פיצ'ר | חישוב | בסיס |
+|---|----------|--------|------|
+| 1 | `segment_length` | אורך ה-segment הארוך ביותר (דקות): `len × (stride/fs) / 60` | Segment ארוך |
+| 2 | `max_prediction` | מקסימום P(acidemia) בסגמנט הארוך | Segment ארוך |
+| 3 | `cumulative_sum` | `Σ(score) × dt` (שטח מתחת לעקומה בזמן) | Segment ארוך |
+| 4 | `weighted_integral` | `Σ((score − 0.5)² × dt)` (סטייה ממצב ניטרלי) | Segment ארוך |
+| 5 | `n_alert_segments` | מספר ה-alert segments הנפרדים | כל ההקלטה |
+| 6 | `alert_fraction` | `n_alert_windows / n_total_windows` | כל ההקלטה |
+| 7 | `mean_prediction` | ממוצע P(acidemia) בסגמנט הארוך | Segment ארוך |
+| 8 | `std_prediction` | סטיית תקן של הציונים בסגמנט הארוך | Segment ארוך |
+| 9 | `max_pred_all_segments` | מקסימום על פני **כל** ה-segments | כל ה-segments |
+| 10 | `total_alert_duration` | סך זמן ה-alert (דקות) — כל הסגמנטים | כל ה-segments |
+| 11 | `recording_max_score` | מקסימום ציון בכל ההקלטה (ללא threshold) | כל ההקלטה |
+| 12 | `recording_mean_above_th` | ממוצע ציוני כל החלונות שמעל AT=0.40 | כל ההקלטה |
+
+**פרמטרים:**
+- `inference_stride = 24` דגימות → `dt = 24/4 = 6` שניות לחלון
+- AT = 0.40 (כלומר, חלון "alert" הוא כל חלון עם score > 0.40)
+- Feature 4: `weighted_integral` — המשקל `(score − 0.5)²` מגביר את הרגישות לציונים גבוהים (>0.5) ומכחיש ציונים נמוכים (<0.5)
+
+**אם אין alert segments:** כל 12 הפיצ'רים = 0.0 (ZERO_FEATURES)
+
+---
+
+### ש2 — מה זה REPRO_TRACK ומאין הגיעו 55 ההקלטות?
+
+**REPRO_TRACK = נקודת ייחוס, לא independent test set.**
+
+```
+הdata כולל 552 הקלטות CTU-UHB:
+  ├── data/splits/train.csv → 441 הקלטות
+  ├── data/splits/val.csv   →  56 הקלטות
+  └── data/splits/test.csv  →  55 הקלטות (= REPRO_TRACK test set)
+
+5-Fold CV: נוצרת stratified 5-fold על כל 552 ההקלטות יחד
+REPRO_TRACK: מאמן על train(441) + val(56) = 497, בודק על test(55)
+```
+
+**התשובה הברורה:**
+1. **האם 55 ההקלטות הן held-out עצמאי?** **לא לגמרי.** הן חלק מ-552, ולכן בחלק מה-CV folds הן נמצאות ב-train/val — לא ב-test
+2. **האם הן אותן 55 הקלטות של Colab?** **כן בדיוק.** אלו אותן ההקלטות שנבדקו ב-Colab (AUC=0.839 / 0.812)
+3. **מה ה-REPRO_TRACK בא להוכיח?** השוואה ישירה עם המאמר ועם תוצאות Colab — על אותו split קנוני
+
+**לכן אי-היציבות של REPRO_TRACK גבוהה בהגדרה:** n=55, acidemia=11 → CI רחב של ±0.16 מתקבל מהnoise הסטטיסטי בלבד. תנודות של 0.5165↔0.7872↔0.5930 בין ריצות נובעות בעיקרן מה-noise הזה ולא משינויי מודל.
+
+---
+
+### ש3 — התפלגות מחלקות ב-Fold 1 — האם יש חוסר איזון חריג?
+
+**תשובה:** **לא. כל ה-folds זהים כמעט לחלוטין** — ה-fold collapse ב-fold 1 אינו נובע מחוסר איזון.
+
+| Fold | Train | n_pos (acidemia) | n_neg | pos_frac | class_weight[1] |
+|------|-------|-----------------|-------|---------|----------------|
+| 0 | 387 | **63** | 324 | 16.3% | 5.14 |
+| **1** | 387 | **63** | 324 | 16.3% | 5.14 |
+| 2 | 387 | **63** | 324 | 16.3% | 5.14 |
+| 3 | 388 | 64 | 324 | 16.5% | 5.06 |
+| 4 | 389 | 64 | 325 | 16.5% | 5.08 |
+
+*מקור: `[class_weights]` בstd_log.txt של v6*
+
+**מה בכל זאת שונה בין fold 1 לשאר?** ה-111 הקלטות ב-**test set** של fold 1 הן אחרות. הבעיה איננה באימון — הbacobne אינו מצליח לעלות על ה-frozen head (0.7695@0) על **ה-val set** של אותו fold. ה-val set (54 הקלטות) ייחודי לכל fold, וב-fold 1 המודל הקפוא (ללא backbone fine-tuning) מניב AUC גבוה במיוחד — כך שה-backbone לא מוסיף מידע.
+
+**מסקנה:** הבעיה ב-fold 1 היא מבנית — תת-קבוצת ה-validation של fold זה כבר "נפתרת" טוב על ידי הראש הלינארי לבדו (frozen pre-trained features מספיקות). Fine-tuning לא מסייע — אפילו פוגע.
+
+---
+
+### ש4 — ה-Progressive Unfreezing — מה זה n_top ואילו שכבות נפתחות?
+
+**קוד:** `src/train/finetune.py`, `unfreeze_phases` + `apply_unfreeze_phase()`
+
+```python
+# ארכיטקטורה: 3 Transformer layers (num_layers=3)
+unfreeze_phases = [
+    [epoch_start, n_top, lr_backbone, lr_head]
+
+    [0,   0,  0.0,    1e-3],   # Phase 1: epochs 0–4   → backbone קפוא לחלוטין
+    [5,   1,  1e-5,   5e-4],   # Phase 2: epochs 5–14  → שכבה 3 (האחרונה) נפתחת
+    [15,  2,  3e-5,   3e-4],   # Phase 3: epochs 15–29 → שכבות 2+3 נפתחות
+    [30, -1,  5e-5,   1e-4],   # Phase 4: epochs 30+   → הכל נפתח (כולל patch_embed)
+]
+```
+
+| Phase | אפוקים | n_top | מה נפתח | backbone LR | head LR |
+|-------|--------|-------|----------|------------|---------|
+| 1 | 0–4 | 0 | כלום — backbone קפוא | 0.0 | 1e-3 |
+| 2 | 5–14 | 1 | `encoder.layers[-1]` (שכבה 3) | 1e-5 | 5e-4 |
+| 3 | 15–29 | 2 | `encoder.layers[-2:]` (שכבות 2+3) | 3e-5 | 3e-4 |
+| 4 | 30+ | -1 | **הכל** — patch_embed + כל 3 שכבות | 5e-5 | 1e-4 |
+
+**מה n_top מספר לנו:**
+- `n_top=0` → backbone.parameters() `requires_grad = False`
+- `n_top=k>0` → `model.encoder.layers[-k:]` ↔ `requires_grad = True` (כי הhead תמיד trainable)
+- `n_top=-1` → `model.parameters()` כולם `requires_grad = True` (כולל `patch_embed`)
+
+**עם LR warmup (v5+):** בכל unfreeze, backbone LR מתחיל מ-0.0 ועולה ב-ramp ליניארי על 5 אפוקים לערך היעד שבטבלה. **עם patience reset (v6+):** `patience_ctr = 0` בכל unfreeze, כלומר המודל מקבל budget חדש של 20 אפוקים.
+
+---
+
+### ש5 — Logistic Regression — Solver ו-max_iter
+
+**קוד:** `scripts/run_e2e_cv_v2.py` → `fit_lr_model()`
+
+```python
+lr = LogisticRegression(
+    C=C,
+    class_weight="balanced",   # auto: n_neg/n_pos per class
+    max_iter=1000,
+    random_state=42
+)
+```
+
+| פרמטר | ערך | הערה |
+|--------|-----|------|
+| **Solver** | **`lbfgs`** (ברירת מחדל sklearn) | L-BFGS — אלגוריתם gradient quasi-Newton |
+| max_iter | **1000** | מספיק ל-C ∈ {0.01, 0.1, 1.0} על feature space זה |
+| class_weight | **"balanced"** | sklearn מחשב אוטומטית: `n_samples / (n_classes × bincount[i])` |
+| PCA לפני LR | `PCA(n_components=0.95)` | שומר על 95% מהשונות — מוריד noise ב-12 features |
+
+**Pipeline מלא:** `X` → `StandardScaler()` → `PCA(n_components=0.95)` → `LogisticRegression(C=C, ...)`
+
+**השפעת C על lbfgs:** lbfgs מתכנס בדרך כלל היטב על feature spaces קטנים כמו זה (12 features → PCA → ~4-8 components). הבעיה של C=0.01 ב-v6 לא הייתה convergence אלא under-regularization (features v6 אינם זהים לfeatures v5 ו-C=0.01 גרם ל-LR להיות conservative מדי).
+
+---
+
+### ש6 — האוגמנטציות — רק Pretrain או גם Fine-tuning?
+
+**תשובה קצרה: שניהם, אבל באופן שונה ובמקורות שונים.**
+
+**Pretrain augmentation** (נוסף ב-v5):
+```python
+# src/data/dataset.py → PretrainDataset
+# מופעל רק על train batches, לא על val
+gaussian_noise:  FHR σ=0.01 (p=0.5), UC σ=0.005 (p=0.5)
+random_scaling:  amplitude × U[0.95, 1.05] (p=0.3)
+```
+
+**Fine-tuning augmentation** (היה קיים מ-v3/v4 — Config A, plan_2 §3.2.1):
+```python
+# src/train/finetune.py → run_epoch() → augment_window()
+# if training and aug_cfg:  ← רק בtraining, לא בvalidation
+gaussian_noise:   {sigma_fhr: 0.01, sigma_uc: 0.005, p: 0.5}
+random_scaling:   {scale_min: 0.95, scale_max: 1.05,  p: 0.3}
+temporal_jitter:  {max_shift: 50,                      p: 0.5}   ← נוסף ב-fine-tune
+channel_dropout:  {p: 0.1}                                        ← נוסף ב-fine-tune
+cutout:           {min_len: 48, max_len: 96,           p: 0.2}   ← נוסף ב-fine-tune
+```
+
+**סיכום:**
+- Fine-tuning augmentation: **היה תמיד** (v3/v4/v5/v6), 5 סוגים, **רק בtrain epochs**
+- Pretrain augmentation: **חדש בv5**, 2 סוגים בלבד, **רק בtrain batches**
+- Validation/Test: **ללא שום augmentation** בשום שלב
+
+---
+
+### ש7 — EMA Smoothing — מהו ה-Alpha (Beta)?
+
+**קוד:** `src/train/finetune.py`
+
+```python
+ema_beta = 0.8      # ← hardcoded, לא configurable
+
+# epoch 0:
+smooth_auc = val_auc
+
+# epoch > 0:
+smooth_auc = 0.8 * smooth_auc + 0.2 * val_auc
+```
+
+**תכונות ה-EMA עם beta=0.8:**
+
+| מאפיין | ערך | משמעות |
+|--------|-----|--------|
+| beta (momentum) | **0.8** | משקל ה-history |
+| alpha (learning rate) | 0.2 | משקל הנקודה החדשה |
+| effective lookback | **1/(1−0.8) = 5 אפוקים** | EMA "זוכרת" ~5 אפוקים אחורה |
+| half-life | ~3.1 אפוקים | מחצית ה-weight מה-5 אפוקים האחרונים |
+
+**ה-EarlyStopping בודק `smooth_auc > best_smooth_auc`** — ולא את `val_auc` הגולמי.
+
+**השלכה על ה-fold collapse:** אם `val_auc` יורד מ-0.7599 ל-0.5789 ב-epoch 5, אזי:
+```
+smooth_5 = 0.8×smooth_4 + 0.2×0.5789 ≈ 0.8×0.7599 + 0.2×0.5789 = 0.7237
+smooth_6 = 0.8×0.7237 + 0.2×0.5789 = 0.6947
+smooth_7 = 0.8×0.6947 + 0.2×0.5789 = 0.6715
+...
+```
+גם אם `val_auc` חוזר ל-0.70 ב-epoch 10, ה-`smooth_auc` עדיין נמוך מ-0.7599 ולכן ה-patience_ctr ממשיך לעלות. בv6 עם patience reset, patience_ctr = 0 ב-epoch 5, כך שיש 20 אפוקים נוספים, אבל ה-best_smooth_auc עדיין 0.7237 מ-epoch 0 — וה-backbone צריך להשיג smooth_auc > 0.7237 כדי לשמור checkpoint.
+
+---
+
+### ש8 — מה זה G4a ו-G4b? מאין הגיעו?
+
+**קוד:** `scripts/run_e2e_cv_v2.py`, שורה 23 + `azure_ml/train_azure.py`
+
+```python
+# G4 quality gates (spec §11)
+G0: |ΔAUC(shared-clean)| <= 0.01 on mean(folds 0+1)
+G1: val_mse < 0.015 AND probe_auc > 0.60
+G2: best val AUC on 441/56 >= 0.70
+G3: ft_val AUC fold0 >= 0.65
+G4: mean CV AUC >= 0.70, std < 0.10   ← המפתחים
+G5: LR AUC > transformer-only AUC
+```
+
+**G4 הוא gate 4 מתוך 6 gates שהוגדרו ב-`docs/plan_2.md §11`** — מסמך תכנון פנימי של הפרויקט, לא דרישה מהמאמר.
+
+| Gate | שם | תנאי | מה זה בוחן |
+|------|-----|------|------------|
+| **G4a** | AUC performance | `mean_fold_AUC ≥ 0.70` | האם המודל מגיע לקרבת נייר המחקר (0.826) |
+| **G4b** | AUC consistency | `std_fold_AUC < 0.10` | האם האימון יציב על כל קבוצות-החוצה |
+
+**ביסוס G4a (0.70):** הנייר דיווח AUC=0.826 על single split. עם 5-fold CV על dataset קטן ללא SPaM, 0.70 מוגדר כ-"קרוב מספיק להוכיח שהשיטה עובדת". בפועל, עדיין לא הגענו ל-G4a (best = 0.6385 ב-v4).
+
+**G4b (std<0.10):** עמדנו בו בכל הריצות — גם v5 עם std=0.075.
+
+---
+
+### ש9 — איך מוחלט מי מנצח — Clinical Threshold או Youden?
+
+**יש שני מנגנונים שונים שיש לא לבלבל ביניהם:**
+
+#### מנגנון A — Main Pipeline (sections 12-15, per fold)
+
+```python
+# scripts/run_e2e_cv_v2.py → clinical_threshold()
+SPEC_CONSTRAINT = 0.65
+
+def clinical_threshold(y_true, y_score, spec_constraint=0.65):
+    # מחפש: max(Sensitivity) s.t. Specificity ≥ 0.65
+    # Fallback: אם לא נמצא threshold עם Spec≥0.65 → Youden's J
+```
+
+**תהליך per fold:**
+1. LR מאומן על train, מחזיר ציונים על val
+2. `clinical_threshold()` בוחר threshold על val (clinical primary, Youden fallback)
+3. זה ה-threshold שמשמש לOOF predictions (ומשם OOF AUC)
+4. ה-**global OOF AUC הגלובלי אינו תלוי בthreshold** — הוא חושב ב-pooled ROC על כל הציונים
+
+#### מנגנון B — Post-hoc Grid Search (section 16, for analysis)
+
+```python
+# בודק כל קומבינציה (AT, n_feat, C, threshold_method) על TEST set
+# threshold_method ∈ ["clinical", "youden"]
+# מדרג לפי mean_test_AUC
+# "grid winner" = הקומבינציה הטובה ביותר
+```
+
+**חשוב:** Grid search בוחר threshold_method **לפי test AUC** — ולא כחוק לתקופות הבאות. זה ניתוח post-hoc בלבד.
+
+**מה נראה בהיסטוריה:**
+- v4 grid winner: Youden (כי val set שימש לleakage, clinical לא התאים)
+- v5 grid winner: clinical (אחרי תיקון leakage, clinical ≥ Youden)
+- v6 grid winner: clinical
+
+**לסיכום:** בפועל, ה-OOF AUC הגלובלי (שהוא המדד העיקרי) תמיד משתמש ב-**clinical** עם **Youden fallback**. הgrid search רק בודק בדיעבד — ולא משנה את ה-OOF AUC שכבר חושב.
+
+---
+
 ## נספח — ביצועים טכניים Azure ML
 
 | בעיה | פתרון |

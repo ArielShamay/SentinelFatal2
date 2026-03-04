@@ -76,7 +76,9 @@
       "Bash(\"/c/Program Files/Microsoft SDKs/Azure/CLI2/wbin/az.cmd\" account show)",
       "Bash(for i in 1 2 3 4 5)",
       "Bash(do python -c \":*)",
-      "Bash(for i in 1 2 3 4 5 6)"
+      "Bash(for i in 1 2 3 4 5 6)",
+      "WebFetch(domain:code.visualstudio.com)",
+      "Bash(grep -h \"type.*webview\\\\|createWebviewPanel\\\\|createChatParticipant\" /c/Users/ariel/.vscode/extensions/*/package.json)"
     ],
     "additionalDirectories": [
       "c:\\Users\\ariel\\Desktop\\SentinelFatal2\\notebooks",
