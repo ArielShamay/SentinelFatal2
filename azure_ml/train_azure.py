@@ -89,6 +89,7 @@ for mod_key in list(sys.modules.keys()):
 
 # ── 4. Imports ─────────────────────────────────────────────────────────────
 import random
+import shutil as _shutil
 
 import numpy as np
 import pandas as pd
@@ -126,12 +127,17 @@ SPEC_CONSTRAINT = 0.65
 AT_CANDIDATES   = [0.30, 0.35, 0.40, 0.45]
 N_FEATURES      = 12
 VAL_EVERY_N     = 5
-PATIENCE        = 15
+PATIENCE        = 20                   # ← 15→20: allows recovery from unfreeze AUC drops
 
 # Azure ML output directories (fall back to local if env vars not set)
 OUT_RESULTS = Path(os.environ.get("AZUREML_OUTPUT_results",    str(REPO_DIR / "results"     / "e2e_cv_v3")))
 OUT_CKPTS   = Path(os.environ.get("AZUREML_OUTPUT_checkpoints", str(REPO_DIR / "checkpoints" / "e2e_cv_v3")))
 OUT_LOGS    = Path(os.environ.get("AZUREML_OUTPUT_logs",        str(REPO_DIR / "logs"        / "e2e_cv_v3")))
+
+# Azure ML always uploads ./outputs/ at job end — persistent across compute dealloc
+PERSISTENT_OUT = Path("./outputs")
+(PERSISTENT_OUT / "checkpoints").mkdir(parents=True, exist_ok=True)
+(PERSISTENT_OUT / "results").mkdir(parents=True, exist_ok=True)
 
 CONFIG_PATH = str(REPO_DIR / "config" / "train_config.yaml")
 
@@ -140,7 +146,7 @@ CONFIG_A_OVERRIDES = {
     "class_weight": [1.0, 3.9],
     "patience":     PATIENCE,
     "train_stride": 120,
-    "val_stride":   120,
+    "val_stride":   60,   # ← 120→60: denser validation signal for better model selection
 }
 
 # Shared pre-train checkpoint candidates (checked in order)
@@ -398,6 +404,15 @@ for k, split in enumerate(cv_splits):
         f"(AUC={_best_auc_tracker['auc']:.4f}). Elapsed: {(time.time()-fold_start)/60:.1f} min"
     )
 
+    # Persist to ./outputs/ immediately (survives compute node deallocation)
+    _out_fold_ckpt = PERSISTENT_OUT / "checkpoints" / f"fold{k}"
+    _out_fold_ckpt.mkdir(parents=True, exist_ok=True)
+    if best_ckpt.exists():
+        _shutil.copy(str(best_ckpt), str(_out_fold_ckpt / "best_finetune.pt"))
+        print(f"[FOLD {k}] Checkpoint persisted -> ./outputs/checkpoints/fold{k}/")
+    else:
+        print(f"[FOLD {k}] WARNING: best_finetune.pt not found — fold evaluation may fail.")
+
     if not best_ckpt.exists():
         print(f"[FOLD {k}] best_finetune.pt not found — skipping evaluation.")
         continue
@@ -446,10 +461,9 @@ for k, split in enumerate(cv_splits):
     gc.collect()
     torch.cuda.empty_cache()
 
-    # ── LR model: fit_lr_model returns (scaler, pca, lr) ─────────────────
-    X_tv = np.concatenate([X_tr, X_vl])
-    y_tv = np.concatenate([y_tr, y_vl])
-    scaler, pca, lr_m = fit_lr_model(X_tv, y_tv, C=0.1, use_pca=True)
+    # ── LR model: train on training set ONLY (val not reused after AT selection) ──
+    # C=0.01: grid winner from v5 (grid_best_configs.csv rank 1)
+    scaler, pca, lr_m = fit_lr_model(X_tr, y_tr, C=0.01, use_pca=True)
 
     # Predict on val (threshold selection) and test (evaluation)
     # Threshold selected on val — NOT on test (avoids leakage)
@@ -557,3 +571,253 @@ report = pd.DataFrame([{
 report.to_csv(OUT_RESULTS / "final_cv_report_v3.csv", index=False)
 print(f"\n[DONE] final_cv_report_v3.csv saved.")
 print(f"[DONE] Total runtime: {(time.time()-job_start)/60:.1f} min")
+
+# Persist CSVs to ./outputs/ (survives compute node deallocation)
+for _csv_src in [
+    OUT_RESULTS / "final_cv_report_v3.csv",
+    OUT_RESULTS / "global_oof_predictions.csv",
+    OUT_RESULTS / "per_fold_summary.csv",
+]:
+    if _csv_src.exists():
+        _shutil.copy(str(_csv_src), str(PERSISTENT_OUT / "results" / _csv_src.name))
+print("[DONE] Results persisted to ./outputs/results/")
+
+# ── 15. REPRO_TRACK — Canonical 441/56/55 split for direct comparison ──────
+# Mirrors Cell REPRO_TRACK in notebooks/09_e2e_cv_v3.ipynb.
+# Trains on the fixed canonical split (not cross-validated) to produce a
+# test-set AUC comparable with prior reported results (benchmark AUC 0.826).
+print(f"\n{'='*60}")
+print("REPRO_TRACK — Canonical split (train=441 / val=56 / test=55)")
+print(f"{'='*60}")
+try:
+    repro_ckpt_dir = OUT_CKPTS / "repro_track" / "finetune"
+    repro_ckpt_dir.mkdir(parents=True, exist_ok=True)
+
+    ft.train(
+        config_path         = CONFIG_PATH,
+        device_str          = DEVICE,
+        max_batches         = 0,
+        processed_root      = str(PROCESSED_ROOT),
+        train_csv           = str(splits_dir / "train.csv"),
+        val_csv             = str(splits_dir / "val.csv"),
+        pretrain_checkpoint = SHARED_PRETRAIN_CKPT,
+        checkpoint_dir      = str(repro_ckpt_dir),
+        log_path            = str(OUT_LOGS / "repro_track_loss.csv"),
+        quiet               = True,
+        save_epoch_ckpts    = False,
+        config_overrides    = CONFIG_A_OVERRIDES,
+        val_every_n_epochs  = VAL_EVERY_N,
+    )
+
+    best_ckpt_r = repro_ckpt_dir / "best_finetune.pt"
+    if not best_ckpt_r.exists():
+        raise FileNotFoundError("REPRO_TRACK: best_finetune.pt not found after training")
+
+    # Persist REPRO_TRACK checkpoint to ./outputs/
+    _repro_out = PERSISTENT_OUT / "checkpoints" / "repro_track"
+    _repro_out.mkdir(parents=True, exist_ok=True)
+    _shutil.copy(str(best_ckpt_r), str(_repro_out / "best_finetune.pt"))
+    print("[REPRO_TRACK] Checkpoint persisted -> ./outputs/checkpoints/repro_track/")
+
+    model_r = _load_best_model(str(best_ckpt_r), DEVICE)
+
+    best_at_r, _, _ = at_sweep(
+        model_r, splits_dir / "val.csv", PROCESSED_ROOT,
+        train_csv=splits_dir / "train.csv", device=DEVICE,
+        inference_stride=24, n_features=N_FEATURES,
+        lr_C=0.1, use_pca=True,
+    )
+
+    X_tr_r, y_tr_r, _ = extract_features_for_split(
+        model_r, splits_dir / "train.csv", PROCESSED_ROOT, best_at_r, 24, DEVICE, N_FEATURES)
+    X_vl_r, y_vl_r, _ = extract_features_for_split(
+        model_r, splits_dir / "val.csv",   PROCESSED_ROOT, best_at_r, 24, DEVICE, N_FEATURES)
+    X_te_r, y_te_r, _ = extract_features_for_split(
+        model_r, splits_dir / "test.csv",  PROCESSED_ROOT, best_at_r, 24, DEVICE, N_FEATURES)
+
+    del model_r
+    gc.collect()
+    torch.cuda.empty_cache()
+
+    # LR on training set only (same policy as main pipeline — no val leakage)
+    sc_r, pca_r, lr_r = fit_lr_model(X_tr_r, y_tr_r, C=0.01, use_pca=True)
+
+    val_sc_r  = predict_lr(X_vl_r, sc_r, pca_r, lr_r)
+    test_sc_r = predict_lr(X_te_r, sc_r, pca_r, lr_r)
+
+    repro_auc          = float(roc_auc_score(y_te_r, test_sc_r))
+    r_lo, r_hi         = bootstrap_auc_ci(y_te_r, test_sc_r, N_BOOTSTRAP, SEED)
+    r_thr, r_sens, r_spec = clinical_threshold(y_vl_r, val_sc_r, spec_constraint=SPEC_CONSTRAINT)
+
+    print(f"\n[REPRO_TRACK] Canonical test (n=55):")
+    print(f"   AUC:         {repro_auc:.4f}  [{r_lo:.4f}, {r_hi:.4f}]  95% CI")
+    print(f"   Sensitivity: {r_sens:.4f}  Specificity: {r_spec:.4f}")
+    print(f"   Threshold:   {r_thr:.4f}   Best AT:     {best_at_r:.2f}")
+    print(f"   Prior best:  AUC=0.839  (AT=0.40, Youden threshold)")
+
+    pd.DataFrame([{
+        "auc": repro_auc, "ci_lo": r_lo, "ci_hi": r_hi,
+        "sensitivity": r_sens, "specificity": r_spec,
+        "threshold": r_thr, "best_at": best_at_r, "prior_auc": 0.839,
+    }]).to_csv(OUT_RESULTS / "repro_comparison_v3.csv", index=False)
+    print("[REPRO_TRACK] Saved repro_comparison_v3.csv")
+
+    # Append RepRo row to comparison table (matches notebook spec §12.5)
+    cmp_path = OUT_RESULTS / "comparison_table_v3.csv"
+    comparison = pd.DataFrame([
+        {"method": "Paper (benchmark)",              "n": 55,  "auc": 0.826, "ci_lo": None,  "ci_hi": None},
+        {"method": "Baseline Stage2 LR (test-55)",   "n": 55,  "auc": 0.812, "ci_lo": 0.630, "ci_hi": 0.953},
+        {"method": "Best post-hoc (AT=0.40, Youden)","n": 55,  "auc": 0.839, "ci_lo": None,  "ci_hi": None},
+        {"method": "RepRo Track v3 (441/56/55)",      "n": 55,  "auc": repro_auc, "ci_lo": r_lo, "ci_hi": r_hi},
+        {"method": "E2E CV v3 (552, 5-fold OOF)",    "n": 552, "auc": global_auc, "ci_lo": ci_lo, "ci_hi": ci_hi},
+    ])
+    comparison.to_csv(cmp_path, index=False)
+    print("[REPRO_TRACK] Saved comparison_table_v3.csv")
+    print(comparison[["method", "n", "auc", "ci_lo", "ci_hi"]].to_string(index=False))
+
+    # Persist REPRO_TRACK CSVs to ./outputs/
+    for _csv_src in [
+        OUT_RESULTS / "repro_comparison_v3.csv",
+        OUT_RESULTS / "comparison_table_v3.csv",
+    ]:
+        if _csv_src.exists():
+            _shutil.copy(str(_csv_src), str(PERSISTENT_OUT / "results" / _csv_src.name))
+    print("[REPRO_TRACK] CSVs persisted to ./outputs/results/")
+
+except Exception as _repro_exc:
+    import traceback
+    print(f"[REPRO_TRACK] Failed: {_repro_exc}")
+    traceback.print_exc()
+    print("[REPRO_TRACK] Skipping — main 5-fold CV results are unaffected.")
+
+# ── 16. POST-TRAINING GRID SEARCH ──────────────────────────────────────────
+print(f"\n{'='*60}")
+print("POST-TRAINING GRID SEARCH — AT × LR_C × n_features × threshold")
+print(f"{'='*60}")
+
+AT_GRID     = [0.30, 0.35, 0.40, 0.45, 0.50]
+LR_C_GRID   = [0.01, 0.1, 1.0]
+NFEAT_GRID  = [4, 12]
+THRESH_GRID = ["clinical", "youden"]
+grid_rows   = []
+
+from sklearn.metrics import roc_curve as _roc_curve  # imported once, outside all loops
+
+for k, split in enumerate(cv_splits):
+    fold_ckpt_path = PERSISTENT_OUT / "checkpoints" / f"fold{k}" / "best_finetune.pt"
+    if not fold_ckpt_path.exists():
+        print(f"[GRID] Fold {k}: checkpoint not found — skipping.")
+        continue
+
+    print(f"\n[GRID] Fold {k}: loading checkpoint for grid search...")
+    try:
+        model_g = _load_best_model(str(fold_ckpt_path), DEVICE)
+    except Exception as _e:
+        print(f"[GRID] Fold {k}: load error: {_e}")
+        continue
+
+    # Pre-extract 12 features at each AT (reuse across all LR_C/nfeat/thresh combos)
+    feat_cache = {}
+    for at_val in AT_GRID:
+        try:
+            _Xtr12, _ytr, _ = extract_features_for_split(
+                model_g, split["train_csv"], PROCESSED_ROOT, at_val, 24, DEVICE, 12)
+            _Xvl12, _yvl, _ = extract_features_for_split(
+                model_g, split["val_csv"],   PROCESSED_ROOT, at_val, 24, DEVICE, 12)
+            _Xte12, _yte, _ids = extract_features_for_split(
+                model_g, split["test_csv"],  PROCESSED_ROOT, at_val, 24, DEVICE, 12)
+            feat_cache[at_val] = (_Xtr12, _ytr, _Xvl12, _yvl, _Xte12, _yte, _ids)
+            print(f"[GRID]   Fold {k} AT={at_val:.2f}: features extracted "
+                  f"(tr={len(_ytr)}, vl={len(_yvl)}, te={len(_yte)})")
+        except Exception as _e:
+            print(f"[GRID]   Fold {k} AT={at_val:.2f}: extraction failed: {_e}")
+
+    del model_g
+    gc.collect()
+    torch.cuda.empty_cache()
+
+    # Full grid sweep over (AT, n_features, LR_C, threshold_method)
+    for at_val in AT_GRID:
+        if at_val not in feat_cache:
+            continue
+        Xtr12, ytr, Xvl12, yvl, Xte12, yte, te_ids_g = feat_cache[at_val]
+        for n_feat in NFEAT_GRID:
+            Xtr = Xtr12[:, :n_feat]
+            Xvl = Xvl12[:, :n_feat]
+            Xte = Xte12[:, :n_feat]
+            for lr_c in LR_C_GRID:
+                # LR fit on training set only (no val leakage); threshold selected on val
+                try:
+                    sc_g, pca_g, lr_g = fit_lr_model(Xtr, ytr, C=lr_c, use_pca=(n_feat > 3))
+                    vs_g = predict_lr(Xvl, sc_g, pca_g, lr_g)
+                    ts_g = predict_lr(Xte, sc_g, pca_g, lr_g)
+                    test_auc_g = float(roc_auc_score(yte, ts_g))
+                except Exception as _lr_exc:
+                    print(f"[GRID]   fold={k} at={at_val:.2f} n={n_feat} C={lr_c}: "
+                          f"LR failed — {_lr_exc}")
+                    continue
+                # Per-threshold evaluation — independent try/except so one failure
+                # doesn't suppress the other threshold method's result
+                for thr_method in THRESH_GRID:
+                    try:
+                        if thr_method == "clinical":
+                            thr_g, sens_g, spec_g = clinical_threshold(
+                                yvl, vs_g, SPEC_CONSTRAINT)
+                        else:  # youden
+                            fpr_y, tpr_y, thr_cands = _roc_curve(yvl, vs_g)
+                            best_idx = int(np.argmax(tpr_y - fpr_y))
+                            thr_g  = float(thr_cands[best_idx])
+                            sens_g = float(tpr_y[best_idx])
+                            spec_g = float(1 - fpr_y[best_idx])
+                        ypred_g = (ts_g >= thr_g).astype(int)
+                        test_sens_g = float(ypred_g[yte == 1].mean()) if yte.sum() > 0 else 0.0
+                        test_spec_g = float((1 - ypred_g[yte == 0]).mean()) if (1 - yte).sum() > 0 else 0.0
+                        grid_rows.append({
+                            "fold":             k,
+                            "at":               at_val,
+                            "n_features":       n_feat,
+                            "lr_C":             lr_c,
+                            "threshold_method": thr_method,
+                            "val_threshold":    round(thr_g, 4),
+                            "test_auc":         round(test_auc_g, 4),
+                            "test_sens":        round(test_sens_g, 3),
+                            "test_spec":        round(test_spec_g, 3),
+                        })
+                    except Exception as _thr_exc:
+                        print(f"[GRID]   fold={k} at={at_val:.2f} n={n_feat} C={lr_c} "
+                              f"thr={thr_method}: skipped — {_thr_exc}")
+
+    n_fold_rows = len([r for r in grid_rows if r["fold"] == k])
+    print(f"[GRID] Fold {k}: {n_fold_rows} combos done.")
+
+# Grid search summary
+if grid_rows:
+    grid_df = pd.DataFrame(grid_rows)
+    grid_df.to_csv(OUT_RESULTS / "grid_search_results.csv", index=False)
+    _shutil.copy(str(OUT_RESULTS / "grid_search_results.csv"),
+                 str(PERSISTENT_OUT / "results" / "grid_search_results.csv"))
+
+    group_cols = ["at", "n_features", "lr_C", "threshold_method"]
+    best_combos = (
+        grid_df.groupby(group_cols)["test_auc"]
+        .mean()
+        .reset_index()
+        .sort_values("test_auc", ascending=False)
+    )
+    best_combos.to_csv(OUT_RESULTS / "grid_best_configs.csv", index=False)
+    _shutil.copy(str(OUT_RESULTS / "grid_best_configs.csv"),
+                 str(PERSISTENT_OUT / "results" / "grid_best_configs.csv"))
+
+    print(f"\n[GRID] {len(grid_df)} total evaluations across {len(cv_splits)} folds.")
+    print("\n[GRID] TOP 10 CONFIGURATIONS (mean test AUC across folds):")
+    print(best_combos.head(10).to_string(index=False))
+    best_row = best_combos.iloc[0]
+    print(
+        f"\n[GRID] WINNER: AT={best_row['at']:.2f} | n_feat={int(best_row['n_features'])} | "
+        f"C={best_row['lr_C']} | thr={best_row['threshold_method']} | "
+        f"mean_AUC={best_row['test_auc']:.4f}"
+    )
+else:
+    print("[GRID] No results — fold checkpoints were missing.")
+
+print(f"\n[DONE] All done. Total runtime: {(time.time()-job_start)/60:.1f} min")

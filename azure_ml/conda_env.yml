@@ -1,7 +1,5 @@
 name: sentinelfatal2
 channels:
-  - pytorch
-  - nvidia
   - conda-forge
   - defaults
 dependencies:

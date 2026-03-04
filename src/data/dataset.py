@@ -62,6 +62,10 @@ class PretrainDataset(Dataset):
         processed_root: Root directory containing `ctu_uhb/` and `fhrma/` subdirs.
         window_len:     Samples per window (default 1800 — ✓ paper).
         stride:         Sliding stride in samples (default 900 — ⚠ S4).
+        augment:        If True, apply lightweight augmentations during __getitem__:
+                        Gaussian noise on FHR (σ=0.01, p=0.5) and UC (σ=0.005, p=0.5),
+                        random amplitude scaling ×[0.95, 1.05] (p=0.3).
+                        Preserves FHR-UC temporal co-occurrence for channel-asymmetric MAE.
     """
 
     def __init__(
@@ -70,9 +74,11 @@ class PretrainDataset(Dataset):
         processed_root: Union[str, Path],
         window_len: int = 1800,
         stride: int = 900,
+        augment: bool = False,
     ):
         self.window_len = window_len
         self.stride = stride
+        self.augment = augment
         self.processed_root = Path(processed_root)
 
         df = pd.read_csv(pretrain_csv, dtype={"id": str, "dataset": str})
@@ -130,16 +136,39 @@ class PretrainDataset(Dataset):
         return len(self._windows)
 
     def __getitem__(self, idx: int) -> torch.Tensor:
-        """Return one window as (2, window_len) float32 tensor."""
+        """Return one window as (2, window_len) float32 tensor.
+
+        If self.augment=True, applies lightweight augmentations that preserve
+        the FHR-UC temporal co-occurrence required for channel-asymmetric MAE:
+          - Gaussian noise on FHR channel (σ=0.01, p=0.5)
+          - Gaussian noise on UC channel  (σ=0.005, p=0.5)
+          - Random amplitude scaling ×[0.95, 1.05] (p=0.3, same scale for both channels)
+        """
         npy_path, start = self._windows[idx]
         # mmap_mode='r' avoids loading the whole file into RAM
-        signal = np.load(npy_path, mmap_mode="r")[:, start : start + self.window_len]
-        return torch.from_numpy(signal.copy())  # copy() to materialise mmap slice
+        signal = np.load(npy_path, mmap_mode="r")[:, start : start + self.window_len].copy()
+
+        if self.augment:
+            rng = np.random.default_rng()  # thread-safe: no shared global state
+            # Gaussian noise: FHR (channel 0) — σ=0.01 ≈ 1.6 bpm in original units
+            if rng.random() < 0.5:
+                signal[0] = (signal[0] + rng.normal(0, 0.01, self.window_len)).astype(np.float32)
+            # Gaussian noise: UC (channel 1) — σ=0.005 ≈ 0.5 mmHg in original units
+            if rng.random() < 0.5:
+                signal[1] = (signal[1] + rng.normal(0, 0.005, self.window_len)).astype(np.float32)
+            # Amplitude scaling (same factor for both channels — preserves FHR/UC ratio)
+            if rng.random() < 0.3:
+                scale = rng.uniform(0.95, 1.05)
+                signal = (signal * scale).astype(np.float32)
+            # Clip to valid normalised range [0, 1]
+            signal = np.clip(signal, 0.0, 1.0)
+
+        return torch.from_numpy(signal)
 
     def __repr__(self) -> str:
         return (
             f"PretrainDataset(n_windows={len(self)}, "
-            f"window_len={self.window_len}, stride={self.stride})"
+            f"window_len={self.window_len}, stride={self.stride}, augment={self.augment})"
         )
 
 
@@ -156,6 +185,7 @@ def build_pretrain_loaders(
     val_fraction: float = 0.1,
     num_workers: int = 0,
     seed: int = 42,
+    augment: bool = False,
 ) -> Tuple[DataLoader, DataLoader]:
     """Build train and validation DataLoaders for pre-training.
 
@@ -171,11 +201,13 @@ def build_pretrain_loaders(
         val_fraction:   Fraction of windows used for validation (default 0.1).
         num_workers:    DataLoader worker processes (default 0 = main thread).
         seed:           RNG seed for reproducible split.
+        augment:        If True, enable Gaussian noise + amplitude scaling on windows.
 
     Returns:
         (train_loader, val_loader)
     """
-    dataset = PretrainDataset(pretrain_csv, processed_root, window_len, stride)
+    dataset = PretrainDataset(pretrain_csv, processed_root, window_len, stride,
+                              augment=augment)
 
     n_total = len(dataset)
     n_val   = max(1, int(n_total * val_fraction))

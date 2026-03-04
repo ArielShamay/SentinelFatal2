@@ -300,15 +300,9 @@ def _submit_job(ml_client, env_ref: str, data_ref: str, low_priority: bool):
     code_dir = _build_code_snapshot()  # minimal ~1 MB snapshot
 
     job = command(
-        code=code_dir,                # uploads only src/ + azure_ml/ + scripts/ + config/ + data/splits/
-        command="python azure_ml/train_azure.py --data ${{inputs.data}}",
-        inputs={
-            "data": Input(
-                type=AssetTypes.URI_FILE,
-                path=f"azureml:{data_ref}",
-                mode="download",      # Azure ML copies zip to local SSD before job starts
-            ),
-        },
+        code=code_dir,                # uploads src/ + azure_ml/ + scripts/ + config/ + data/splits/ + data_processed.zip
+        command="python azure_ml/train_azure.py",
+        # No Azure ML data inputs — train_azure.py downloads data_processed.zip from GitHub at runtime
         environment=env_ref,
         compute=COMPUTE_NAME,
         display_name="SentinelFatal2-E2E-CV-v3",
@@ -317,20 +311,8 @@ def _submit_job(ml_client, env_ref: str, data_ref: str, low_priority: bool):
             "Config A: cross_entropy loss, class_weight=[1.0, 3.9], patience=15, "
             "train_stride=120, val_every_5_epochs, num_workers=0."
         ),
-        outputs={
-            "results": Output(
-                type=AssetTypes.URI_FOLDER,
-                path=f"azureml://datastores/workspaceblobstore/paths/sentinelfatal2/results/",
-            ),
-            "checkpoints": Output(
-                type=AssetTypes.URI_FOLDER,
-                path=f"azureml://datastores/workspaceblobstore/paths/sentinelfatal2/checkpoints/",
-            ),
-            "logs": Output(
-                type=AssetTypes.URI_FOLDER,
-                path=f"azureml://datastores/workspaceblobstore/paths/sentinelfatal2/logs/",
-            ),
-        },
+        # No custom output paths — use Azure ML default outputs dir (avoids FUSE mount hang)
+        # train_azure.py writes to $AZUREML_OUTPUT_* if set, or local ./outputs/ otherwise
         environment_variables={
             "PYTHONUNBUFFERED": "1",
         },

@@ -491,6 +491,11 @@ def train(
     ])
     last_phase_key = None   # track phase transitions
 
+    # Warmup state: ramp backbone LR from 0 after each unfreeze (implements lr_warmup_epochs)
+    _warmup_start_epoch  = -1    # epoch when last actual unfreeze happened (-1 = inactive)
+    _warmup_target_lr_bb = 0.0   # target backbone LR to reach at end of warmup
+    _warmup_epochs = int(ftcfg.get("lr_warmup_epochs", 5))
+
     # SWA config (plan_2 §3.1.2)
     swa_start = int(ftcfg.get("swa_start", 50))
     swa_end   = int(ftcfg.get("swa_end",   100))
@@ -526,8 +531,17 @@ def train(
             n_top, lr_bb, lr_hd = get_unfreeze_phase(epoch, unfreeze_phases)
             phase_key = (n_top, lr_bb, lr_hd)
             if phase_key != last_phase_key:
-                apply_unfreeze_phase(model, n_top, lr_bb, lr_hd, optimizer,
-                                     weight_decay=float(ftcfg["weight_decay"]))
+                if n_top != 0:  # actual unfreeze (n_top>0 or -1): start warmup at LR=0
+                    _warmup_start_epoch  = epoch
+                    _warmup_target_lr_bb = lr_bb
+                    apply_unfreeze_phase(model, n_top, 0.0, lr_hd, optimizer,
+                                         weight_decay=float(ftcfg["weight_decay"]))
+                    patience_ctr = 0  # fresh patience budget after each unfreeze
+                    print(f"  [warmup] Starting {_warmup_epochs}-epoch backbone LR ramp "
+                          f"(target={lr_bb:.1e})")
+                else:           # n_top=0: initial frozen phase, no warmup needed
+                    apply_unfreeze_phase(model, n_top, lr_bb, lr_hd, optimizer,
+                                         weight_decay=float(ftcfg["weight_decay"]))
                 last_phase_key = phase_key
 
         train_loss = run_epoch(
@@ -548,6 +562,15 @@ def train(
 
         smooth_auc = val_auc if epoch == 0 else ema_beta * smooth_auc + (1 - ema_beta) * val_auc
         scheduler.step(smooth_auc)
+
+        # Warmup override: linearly ramp backbone LR over first _warmup_epochs epochs
+        # after each unfreeze event. Applied AFTER scheduler.step() so it takes precedence.
+        if _warmup_target_lr_bb > 0 and _warmup_start_epoch >= 0 and _warmup_epochs > 0:
+            elapsed = epoch - _warmup_start_epoch
+            if elapsed < _warmup_epochs:
+                warmup_scale = (elapsed + 1) / _warmup_epochs   # 1/W, 2/W, ..., W/W
+                optimizer.param_groups[0]['lr'] = _warmup_target_lr_bb * warmup_scale
+                import sys as _sys; _sys.stdout.flush()
 
         # SWA accumulation window
         if swa_start <= epoch < swa_end:

@@ -1,0 +1,200 @@
+11651:   [Epoch 020] loss=0.8209  val_auc=0.6639  best=0.7092@10
+11652: [epoch 021] train_loss=0.820979  val_auc=0.663923  smooth=0.660879  lr_bb=3.00e-05  lr_hd=3.00e-04  (36.3s)
+11653:   No improvement (7/15)
+11654:   [Epoch 021] loss=0.8210  val_auc=0.6639  best=0.7092@10
+11655: [epoch 022] train_loss=0.820297  val_auc=0.663923  smooth=0.661488  lr_bb=1.50e-05  lr_hd=1.50e-04  (36.3s)
+11656:   No improvement (8/15)
+11657:   [Epoch 022] loss=0.8203  val_auc=0.6639  best=0.7092@10
+11658: [epoch 023] train_loss=0.792420  val_auc=0.663923  smooth=0.661975  lr_bb=1.50e-05  lr_hd=1.50e-04  (36.3s)
+11659:   No improvement (9/15)
+11660:   [Epoch 023] loss=0.7924  val_auc=0.6639  best=0.7092@10
+11661: [epoch 024] train_loss=0.779346  val_auc=0.663923  smooth=0.662365  lr_bb=1.50e-05  lr_hd=1.50e-04  (36.2s)
+11662:   No improvement (10/15)
+11663:   [Epoch 024] loss=0.7793  val_auc=0.6639  best=0.7092@10
+11664: [epoch 025] train_loss=0.771924  val_auc=0.629630  smooth=0.655818  lr_bb=1.50e-05  lr_hd=1.50e-04  (37.2s)
+11665:   No improvement (11/15)
+11666:   [Epoch 025] loss=0.7719  val_auc=0.6296  best=0.7092@10
+11667: [epoch 026] train_loss=0.765450  val_auc=0.629630  smooth=0.650580  lr_bb=1.50e-05  lr_hd=1.50e-04  (36.2s)
+11668:   No improvement (12/15)
+11669:   [Epoch 026] loss=0.7655  val_auc=0.6296  best=0.7092@10
+11670: [epoch 027] train_loss=0.762255  val_auc=0.629630  smooth=0.646390  lr_bb=1.50e-05  lr_hd=1.50e-04  (36.3s)
+11671:   No improvement (13/15)
+11672:   [Epoch 027] loss=0.7623  val_auc=0.6296  best=0.7092@10
+11673: [epoch 028] train_loss=0.757839  val_auc=0.629630  smooth=0.643038  lr_bb=1.50e-05  lr_hd=1.50e-04  (36.2s)
+11674:   No improvement (14/15)
+11675:   [Epoch 028] loss=0.7578  val_auc=0.6296  best=0.7092@10
+11676: [epoch 029] train_loss=0.753179  val_auc=0.629630  smooth=0.640356  lr_bb=1.50e-05  lr_hd=1.50e-04  (36.3s)
+11677:   No improvement (15/15)
+11678: [finetune] Early stopping at epoch 29
+11679: 
+11680: [finetune] Finished. Best smooth_auc=0.685997 (best raw=0.709191)
+11681: [finetune] Checkpoints: /mnt/azureml/cr/j/66f12248368c46f78700860844d1b48f/exe/wd/checkpoints/e2e_cv_v3/fold4/finetune/
+11682: [finetune] Loss log:     /mnt/azureml/cr/j/66f12248368c46f78700860844d1b48f/exe/wd/logs/e2e_cv_v3/fold4_finetune_loss.csv
+11683: [FOLD 4] Training done. Best epoch: 10 (AUC=0.7092). Elapsed: 17.2 min
+11684: [FOLD 4] Loaded best model from best_finetune.pt
+11685: 2026-02-27 18:50:15  INFO        [AT sweep] AT=0.30 → val_auc=0.6763
+11686: 2026-02-27 18:50:48  INFO        [AT sweep] AT=0.35 → val_auc=0.6584
+11687: 2026-02-27 18:51:22  INFO        [AT sweep] AT=0.40 → val_auc=0.6859
+11688: 2026-02-27 18:51:55  INFO        [AT sweep] AT=0.45 → val_auc=0.6420
+11689: 2026-02-27 18:51:55  INFO        [AT sweep] Selected AT=0.40 (val_auc=0.6859)
+11690: [FOLD 4] AT sweep -> best_at=0.40  val_auc=0.6859
+11691: [FOLD 4] Test  AUC=0.6061  Sens=0.519  Spec=0.667  thr=0.5439  AT=0.40
+11692: 
+11693: ======================================================
+11694:  FOLD 4 COMPLETE
+11695:    Test AUC:    0.6061
+11696:    Sensitivity: 0.5185  (val-threshold, spec>=0.65)
+11697:    Specificity: 0.6667
+11698:    Best AT:     0.40
+11699:    Threshold:   0.5439
+11700:    Best Epoch:  10  (val_auc=0.7092)
+11701: ======================================================
+11702: 
+11703: ============================================================
+11704: GLOBAL OOF RESULTS
+11705: ============================================================
+11706:   Global OOF AUC : 0.6013  (95% CI: 0.5429-0.6597)
+11707:   Clinical thr   : 0.5197  Sens=0.478  Spec=0.651
+11708: 
+11709:   Per-fold AUCs: 0.5865, 0.6527, 0.6324, 0.5997, 0.6061
+11710:   Mean +/- Std  : 0.6155 +/- 0.0267
+11711: [G4a] FAIL — mean fold AUC = 0.6155 (threshold 0.70)
+11712: [G4b] PASS — std  fold AUC = 0.0267  (threshold 0.10)
+11713: 
+11714: [DONE] final_cv_report_v3.csv saved.
+11715: [DONE] Total runtime: 128.2 min
+11716: 
+11717: ============================================================
+11718: REPRO_TRACK — Canonical split (train=441 / val=56 / test=55)
+11719: ============================================================
+11720: [finetune] device=cuda, batch_size=32, max_batches=full
+11721: [class_weights] n_neg=351, n_pos=90, weights=[1.0, 3.9000000953674316]
+11722: [finetune] loss: CrossEntropyLoss(label_smoothing=0.05)
+11723: [FinetuneDataset] Loaded 441/441 recordings -> 59179 windows (stride=120)
+11724: [FinetuneDataset] Loaded 56/56 recordings -> 1037 windows (stride=900)
+11725: [finetune] dataset - train windows=59179 (stride=120, augment=True), val windows=1037
+11726: [load_checkpoint] Loaded pretrained backbone weights from /mnt/azureml/cr/j/66f12248368c46f78700860844d1b48f/exe/wd/checkpoints/e2e_cv_v3/shared_pretrain/best_pretrain.pt
+11727: [load_checkpoint] Loaded 57 tensors (head will be initialized randomly)
+11728: [finetune] model: PatchTST + ClassificationHead
+11729: [finetune] encoder params: 413,056
+11730: [finetune] Starting: max_epochs=150, patience=15, SWA=[50,100], aug=True, resume_from=0, val_every_n=5
+11731:   [unfreeze] phase: n_top=0, lr_bb=0.0e+00, lr_hd=1.0e-03, trainable_params=37,378
+11732: [epoch 000] train_loss=1.198469  val_auc=0.603220  smooth=0.603220  lr_bb=0.00e+00  lr_hd=1.00e-03  (37.0s)
+11733:   [OK] New best smooth_auc=0.603220 (raw=0.603220) — saved best_finetune.pt
+11734: [epoch 001] train_loss=1.372608  val_auc=0.603220  smooth=0.603220  lr_bb=0.00e+00  lr_hd=1.00e-03  (35.2s)
+11735:   No improvement (1/15)
+11736: [epoch 002] train_loss=1.379620  val_auc=0.603220  smooth=0.603220  lr_bb=0.00e+00  lr_hd=1.00e-03  (36.0s)
+11737:   No improvement (2/15)
+11738: [epoch 003] train_loss=1.411406  val_auc=0.603220  smooth=0.603220  lr_bb=0.00e+00  lr_hd=1.00e-03  (36.0s)
+11739:   No improvement (3/15)
+11740: [epoch 004] train_loss=1.409947  val_auc=0.603220  smooth=0.603220  lr_bb=0.00e+00  lr_hd=1.00e-03  (36.1s)
+11741:   No improvement (4/15)
+11742:   [unfreeze] phase: n_top=1, lr_bb=1.0e-05, lr_hd=5.0e-04, trainable_params=169,858
+11743: [epoch 005] train_loss=1.138910  val_auc=0.571970  smooth=0.596970  lr_bb=1.00e-05  lr_hd=5.00e-04  (37.7s)
+11744:   No improvement (5/15)
+11745: [epoch 006] train_loss=1.032010  val_auc=0.571970  smooth=0.591970  lr_bb=1.00e-05  lr_hd=5.00e-04  (36.7s)
+11746:   No improvement (6/15)
+11747: [epoch 007] train_loss=0.996704  val_auc=0.571970  smooth=0.587970  lr_bb=1.00e-05  lr_hd=5.00e-04  (36.7s)
+11748:   No improvement (7/15)
+11749: [epoch 008] train_loss=0.969423  val_auc=0.571970  smooth=0.584770  lr_bb=5.00e-06  lr_hd=2.50e-04  (36.8s)
+11750:   No improvement (8/15)
+11751: [epoch 009] train_loss=0.884439  val_auc=0.571970  smooth=0.582210  lr_bb=5.00e-06  lr_hd=2.50e-04  (36.7s)
+11752:   No improvement (9/15)
+11753: [epoch 010] train_loss=0.851503  val_auc=0.706439  smooth=0.607056  lr_bb=5.00e-06  lr_hd=2.50e-04  (37.7s)
+11754:   [OK] New best smooth_auc=0.607056 (raw=0.706439) — saved best_finetune.pt
+11755: [epoch 011] train_loss=0.829273  val_auc=0.706439  smooth=0.626932  lr_bb=5.00e-06  lr_hd=2.50e-04  (36.6s)
+11756:   [OK] New best smooth_auc=0.626932 (raw=0.706439) — saved best_finetune.pt
+11757: [epoch 012] train_loss=0.818639  val_auc=0.706439  smooth=0.642834  lr_bb=5.00e-06  lr_hd=2.50e-04  (36.6s)
+11758:   [OK] New best smooth_auc=0.642834 (raw=0.706439) — saved best_finetune.pt
+11759: [epoch 013] train_loss=0.812677  val_auc=0.706439  smooth=0.655555  lr_bb=5.00e-06  lr_hd=2.50e-04  (36.7s)
+11760:   [OK] New best smooth_auc=0.655555 (raw=0.706439) — saved best_finetune.pt
+11761: [epoch 014] train_loss=0.812894  val_auc=0.706439  smooth=0.665732  lr_bb=5.00e-06  lr_hd=2.50e-04  (36.7s)
+11762:   [OK] New best smooth_auc=0.665732 (raw=0.706439) — saved best_finetune.pt
+11763:   [unfreeze] phase: n_top=2, lr_bb=3.0e-05, lr_hd=3.0e-04, trainable_params=302,338
+11764: [epoch 015] train_loss=0.824734  val_auc=0.708333  smooth=0.674252  lr_bb=3.00e-05  lr_hd=3.00e-04  (42.0s)
+11765:   [OK] New best smooth_auc=0.674252 (raw=0.708333) — saved best_finetune.pt
+11766: [epoch 016] train_loss=0.812108  val_auc=0.708333  smooth=0.681068  lr_bb=3.00e-05  lr_hd=3.00e-04  (41.3s)
+11767:   [OK] New best smooth_auc=0.681068 (raw=0.708333) — saved best_finetune.pt
+11768: [epoch 017] train_loss=0.811944  val_auc=0.708333  smooth=0.686521  lr_bb=3.00e-05  lr_hd=3.00e-04  (41.2s)
+11769:   [OK] New best smooth_auc=0.686521 (raw=0.708333) — saved best_finetune.pt
+11770: [epoch 018] train_loss=0.808708  val_auc=0.708333  smooth=0.690884  lr_bb=3.00e-05  lr_hd=3.00e-04  (41.2s)
+11771:   [OK] New best smooth_auc=0.690884 (raw=0.708333) — saved best_finetune.pt
+11772: [epoch 019] train_loss=0.812990  val_auc=0.708333  smooth=0.694374  lr_bb=3.00e-05  lr_hd=3.00e-04  (41.3s)
+11773:   [OK] New best smooth_auc=0.694374 (raw=0.708333) — saved best_finetune.pt
+11774: [epoch 020] train_loss=0.803395  val_auc=0.729167  smooth=0.701332  lr_bb=3.00e-05  lr_hd=3.00e-04  (42.0s)
+11775:   [OK] New best smooth_auc=0.701332 (raw=0.729167) — saved best_finetune.pt
+11776: [epoch 021] train_loss=0.803081  val_auc=0.729167  smooth=0.706899  lr_bb=3.00e-05  lr_hd=3.00e-04  (41.2s)
+11777:   [OK] New best smooth_auc=0.706899 (raw=0.729167) — saved best_finetune.pt
+11778: [epoch 022] train_loss=0.803140  val_auc=0.729167  smooth=0.711353  lr_bb=3.00e-05  lr_hd=3.00e-04  (41.2s)
+11779:   [OK] New best smooth_auc=0.711353 (raw=0.729167) — saved best_finetune.pt
+11780: [epoch 023] train_loss=0.798990  val_auc=0.729167  smooth=0.714915  lr_bb=3.00e-05  lr_hd=3.00e-04  (41.2s)
+11781:   [OK] New best smooth_auc=0.714915 (raw=0.729167) — saved best_finetune.pt
+11782: [epoch 024] train_loss=0.797940  val_auc=0.729167  smooth=0.717766  lr_bb=3.00e-05  lr_hd=3.00e-04  (41.2s)
+11783:   [OK] New best smooth_auc=0.717766 (raw=0.729167) — saved best_finetune.pt
+11784: [epoch 025] train_loss=0.796352  val_auc=0.723485  smooth=0.718910  lr_bb=3.00e-05  lr_hd=3.00e-04  (42.1s)
+11785:   [OK] New best smooth_auc=0.718910 (raw=0.723485) — saved best_finetune.pt
+11786: [epoch 026] train_loss=0.792159  val_auc=0.723485  smooth=0.719825  lr_bb=3.00e-05  lr_hd=3.00e-04  (41.2s)
+11787:   [OK] New best smooth_auc=0.719825 (raw=0.723485) — saved best_finetune.pt
+11788: [epoch 027] train_loss=0.790313  val_auc=0.723485  smooth=0.720557  lr_bb=3.00e-05  lr_hd=3.00e-04  (41.2s)
+11789:   [OK] New best smooth_auc=0.720557 (raw=0.723485) — saved best_finetune.pt
+11790: [epoch 028] train_loss=0.793271  val_auc=0.723485  smooth=0.721142  lr_bb=3.00e-05  lr_hd=3.00e-04  (41.1s)
+11791:   [OK] New best smooth_auc=0.721142 (raw=0.723485) — saved best_finetune.pt
+11792: [epoch 029] train_loss=0.788366  val_auc=0.723485  smooth=0.721611  lr_bb=3.00e-05  lr_hd=3.00e-04  (41.2s)
+11793:   [OK] New best smooth_auc=0.721611 (raw=0.723485) — saved best_finetune.pt
+11794:   [unfreeze] phase: n_top=-1, lr_bb=5.0e-05, lr_hd=1.0e-04, trainable_params=450,434
+11795: [epoch 030] train_loss=0.772432  val_auc=0.649621  smooth=0.707213  lr_bb=5.00e-05  lr_hd=1.00e-04  (47.2s)
+11796:   No improvement (1/15)
+11797: [epoch 031] train_loss=0.760933  val_auc=0.649621  smooth=0.695695  lr_bb=5.00e-05  lr_hd=1.00e-04  (46.5s)
+11798:   No improvement (2/15)
+11799: [epoch 032] train_loss=0.746912  val_auc=0.649621  smooth=0.686480  lr_bb=5.00e-05  lr_hd=1.00e-04  (46.5s)
+11800:   No improvement (3/15)
+11801: [epoch 033] train_loss=0.740886  val_auc=0.649621  smooth=0.679108  lr_bb=5.00e-05  lr_hd=1.00e-04  (46.4s)
+11802:   No improvement (4/15)
+11803: [epoch 034] train_loss=0.738234  val_auc=0.649621  smooth=0.673211  lr_bb=5.00e-05  lr_hd=1.00e-04  (46.4s)
+11804:   No improvement (5/15)
+11805: [epoch 035] train_loss=0.732370  val_auc=0.655303  smooth=0.669629  lr_bb=5.00e-05  lr_hd=1.00e-04  (47.2s)
+11806:   No improvement (6/15)
+11807: [epoch 036] train_loss=0.728653  val_auc=0.655303  smooth=0.666764  lr_bb=5.00e-05  lr_hd=1.00e-04  (46.5s)
+11808:   No improvement (7/15)
+11809: [epoch 037] train_loss=0.726972  val_auc=0.655303  smooth=0.664472  lr_bb=2.50e-05  lr_hd=5.00e-05  (46.5s)
+11810:   No improvement (8/15)
+11811: [epoch 038] train_loss=0.719371  val_auc=0.655303  smooth=0.662638  lr_bb=2.50e-05  lr_hd=5.00e-05  (46.3s)
+11812:   No improvement (9/15)
+11813: [epoch 039] train_loss=0.716590  val_auc=0.655303  smooth=0.661171  lr_bb=2.50e-05  lr_hd=5.00e-05  (46.4s)
+11814:   No improvement (10/15)
+11815: [epoch 040] train_loss=0.714968  val_auc=0.657197  smooth=0.660376  lr_bb=2.50e-05  lr_hd=5.00e-05  (47.2s)
+11816:   No improvement (11/15)
+11817: [epoch 041] train_loss=0.710957  val_auc=0.657197  smooth=0.659740  lr_bb=2.50e-05  lr_hd=5.00e-05  (46.4s)
+11818:   No improvement (12/15)
+11819: [epoch 042] train_loss=0.709643  val_auc=0.657197  smooth=0.659232  lr_bb=2.50e-05  lr_hd=5.00e-05  (46.5s)
+11820:   No improvement (13/15)
+11821: [epoch 043] train_loss=0.709608  val_auc=0.657197  smooth=0.658825  lr_bb=2.50e-05  lr_hd=5.00e-05  (46.4s)
+11822:   No improvement (14/15)
+11823: [epoch 044] train_loss=0.709827  val_auc=0.657197  smooth=0.658499  lr_bb=2.50e-05  lr_hd=5.00e-05  (46.4s)
+11824:   No improvement (15/15)
+11825: [finetune] Early stopping at epoch 44
+11826: 
+11827: [finetune] Finished. Best smooth_auc=0.721611 (best raw=0.729167)
+11828: [finetune] Checkpoints: /mnt/azureml/cr/j/66f12248368c46f78700860844d1b48f/exe/wd/checkpoints/e2e_cv_v3/repro_track/finetune/
+11829: [finetune] Loss log:     /mnt/azureml/cr/j/66f12248368c46f78700860844d1b48f/exe/wd/logs/e2e_cv_v3/repro_track_loss.csv
+11830: 2026-02-27 19:24:35  INFO        [AT sweep] AT=0.30 → val_auc=0.6837
+11831: 2026-02-27 19:25:12  INFO        [AT sweep] AT=0.35 → val_auc=0.6686
+11832: 2026-02-27 19:25:50  INFO        [AT sweep] AT=0.40 → val_auc=0.6799
+11833: 2026-02-27 19:26:28  INFO        [AT sweep] AT=0.45 → val_auc=0.6856
+11834: 2026-02-27 19:26:28  INFO        [AT sweep] Selected AT=0.45 (val_auc=0.6856)
+11835: 
+11836: [REPRO_TRACK] Canonical test (n=55):
+11837:    AUC:         0.6529  [0.4711, 0.8214]  95% CI
+11838:    Sensitivity: 0.5000  Specificity: 0.6591
+11839:    Threshold:   0.5486   Best AT:     0.45
+11840:    Prior best:  AUC=0.839  (AT=0.40, Youden threshold)
+11841: [REPRO_TRACK] Saved repro_comparison_v3.csv
+11842: [REPRO_TRACK] Saved comparison_table_v3.csv
+11843:                          method   n      auc    ci_lo    ci_hi
+11844:               Paper (benchmark)  55 0.826000      NaN      NaN
+11845:    Baseline Stage2 LR (test-55)  55 0.812000 0.630000 0.953000
+11846: Best post-hoc (AT=0.40, Youden)  55 0.839000      NaN      NaN
+11847:      RepRo Track v3 (441/56/55)  55 0.652893 0.471073 0.821429
+11848:     E2E CV v3 (552, 5-fold OOF) 552 0.601326 0.542913 0.659681
+11849: 
+11850: [DONE] All done. Total runtime: 162.8 min

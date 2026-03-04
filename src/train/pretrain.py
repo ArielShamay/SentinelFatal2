@@ -332,6 +332,7 @@ def pretrain(
         val_fraction=0.1,
         num_workers=0,   # spec Rule 3: always 0 to prevent deadlock
         seed=seed,
+        augment=True,    # Gaussian noise + amplitude scaling → more robust representations
     )
     print(f"[pretrain] dataset - train windows={len(train_loader.dataset)}, "
           f"val windows={len(val_loader.dataset)}")

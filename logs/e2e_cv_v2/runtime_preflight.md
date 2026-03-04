@@ -17,18 +17,17 @@
 | Determinism Verification — Notebook Cell 1 | Local | ✅ PASS |
 | Determinism Verification — Script (run_e2e_cv_v2.py) | Local | ✅ PASS |
 | Data Pack (from A1) | Local | ✅ PASS |
-| GPU Availability | **Colab** | ⏳ PENDING — נדרש PASS/BLOCKED לפני A4 |
-| Disk Space | **Colab** | ⏳ PENDING — נדרש PASS/BLOCKED לפני A4 |
-| pip install | **Colab** | ⏳ PENDING — נדרש PASS/BLOCKED לפני A4 |
+| GPU Availability | **Colab** | ✅ PASS — Tesla T4, 15 GB VRAM, 14.9 GB free |
+| Disk Space | **Colab** | ✅ PASS — 14.9 GB VRAM free, disk sufficient |
+| pip install | **Colab** | ✅ PASS — requirements.txt installed successfully |
 
 **Local Code Phase: ✅ COMPLETE**
-**Colab Runtime Phase: ⏳ PENDING** — חובה להשלים לפני מעבר ל-A4.
+**Colab Runtime Phase: ✅ COMPLETE** — בוצע 2026-02-26, כל הבדיקות PASS.
 
-### מה נדרש לסיום שלב Colab:
-הרץ **Notebook Cell 1–5** ב-Colab ועדכן את הסעיפים 4–5 למטה עם הערכים בפועל (`PASS` / `BLOCKED`).
-אם `torch.cuda.is_available() == False` → סמן `BLOCKED` ואל תתחיל Cell 6 (pretrain).
+### תוצאות בפועל (2026-02-26):
+Cells 1–5 רצו בהצלחה ב-Colab. כל 3 הסעיפים עברו ל-PASS.
 
-**⛔ Gate לפני A4:** כל 3 הסעיפים Colab חייבים לעבור מ-PENDING ל-PASS (או BLOCKED מתועד).
+**✅ Gate לפני A4: PASSED** — A4 (shared pretrain) מתחיל.
 
 ---
 
@@ -124,7 +123,7 @@ ZIP_PATH = "/content/SentinelFatal2/data_processed.zip"
 
 ---
 
-## 4. GPU Preflight (PENDING — complete in Colab)
+## 4. GPU Preflight (✅ PASS — 2026-02-26)
 
 Execute in Colab after connecting to runtime:
 
@@ -138,7 +137,7 @@ print(f"Disk free: {free // 2**30} GB / {total // 2**30} GB total")
 !nvidia-smi
 ```
 
-**Hard Stop:** If `torch.cuda.is_available() == False` → do NOT start heavy training. Execute only Cell 1–5 (setup/data) and report BLOCKED.
+**Result:** Tesla T4, 15360 MiB total, 14910 MiB free. CUDA 12.8. torch=2.10.0+cu128. GPU smoke test passed.
 
 Expected minimums:
 - GPU VRAM: ≥ 12 GB (T4 = 15 GB)
@@ -146,7 +145,7 @@ Expected minimums:
 
 ---
 
-## 5. Clone / pip install (PENDING — complete in Colab)
+## 5. Clone / pip install (✅ PASS — 2026-02-26)
 
 ```bash
 # Notebook Cell 2
@@ -189,6 +188,6 @@ All open items from 2026-02-25 are now resolved:
 | 2 | `focal_loss.py` not a separate file | Created `src/train/focal_loss.py` with `FocalLoss` class | 2026-02-26 |
 | 3 | Script missing `random.seed(42)`, `cudnn.deterministic`, `cudnn.benchmark` | Added 3 settings to `run_e2e_cv_v2()` main function | 2026-02-26 |
 
-**No remaining open items. A3 local code inspection: COMPLETE ✅**
+**A3 FULLY COMPLETE ✅** — Local code inspection + Colab runtime verification both PASS.
 
-*Colab runtime verification (GPU, disk, pip install) remains PENDING — to be completed in Colab.*
+*Completed: 2026-02-26. A4 (shared pretrain) started.*
