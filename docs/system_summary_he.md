@@ -225,7 +225,7 @@ uc_mmhg = signal[1] * 100.0           # → [0, 100] mmHg
 | patch_stride | **24 samples (6 שניות)** | train_config.yaml:11 |
 | n_patches | **73** | train_config.yaml:12 |
 | window_len | **1800 samples (7.5 דקות)** | train_config.yaml:9 |
-| norm_type | **batch_norm** | train_config.yaml:21 |
+| norm_type | **batch_norm** | train_config.yaml:22 |
 
 #### כיצד עובד ה-Patching
 
@@ -518,10 +518,11 @@ def inference_recording(model, signal, stride=24):
 שלב 3: חשב descent_time = (nadir - onset) / 4 שניות
 
 שלב 4: סיווג לפי descent_time
-   - descent_time < 30 שניות → VARIABLE (אבruppt)
+   - descent_time < 30 שניות → VARIABLE (abrupt onset)
    - descent_time ≥ 30 שניות → חפש UC peak (±90 שניות, prominence ≥ 2 mmHg)
+     * UC peak לא נמצא → VARIABLE (שמרני)
      * UC peak נמצא AND nadir > 15s אחריו → LATE
-     * אחרת → VARIABLE (שמרני)
+     * UC peak נמצא AND nadir ≤ 15s אחריו → EARLY (לא נספרת — שפירה)
 
 שלב 5: PROLONGED (≥ 120 שניות)
    - נספר בנפרד, לא כ-late/variable כפילות
@@ -595,11 +596,11 @@ def extract_clinical_features(signal: np.ndarray) -> list[float]:
     uc  = signal[1] * 100.0           # → mmHg (שורה 89)
 
     # Call each module with try/except (isolation)
-    baseline  = compute_baseline(fhr, fs=4.0)
-    variab    = compute_variability(fhr, fs=4.0)
-    decels    = compute_decelerations(fhr, uc, fs=4.0)
-    sinus     = compute_sinusoidal(fhr, fs=4.0)
-    tachy     = compute_tachysystole(uc, fs=4.0)
+    baseline  = calculate_baseline(fhr_safe, fs=4.0)
+    variab    = calculate_variability(fhr_safe, fs=4.0)
+    decels    = detect_decelerations(fhr_safe, uc_safe, fs=4.0)
+    sinus     = detect_sinusoidal_pattern(fhr_safe, fs=4.0)
+    tachy     = detect_tachysystole(uc_safe, fs=4.0)
 
     return [
         baseline.baseline_bpm,           # 1
@@ -870,14 +871,14 @@ def override_cache_labels(cache, new_labels) -> dict:
 
 ### 9b. פירוט v7 — הריצה הטובה ביותר לפי PatchTST בלבד
 
-**Job ID:** `crimson_dog_stjh6zsmqb` (Azure ML)
+**Job run ID:** `c749b838cf1a423daa47d3bc47fcd570` (Azure ML — display name לא נשמר)
 
 | מדד | ערך |
 |-----|-----|
 | OOF AUC (5-fold) | 0.6381 [95% CI: 0.577, 0.696] |
 | REPRO_TRACK AUC | 0.7934 [95% CI: 0.6498, 0.9150] |
-| REPRO Sensitivity | 0.75 (9/12) |
-| REPRO Specificity | 0.659 |
+| REPRO Sensitivity | ~0.75 (מ-Azure artifacts) |
+| REPRO Specificity | ~0.659 (מ-Azure artifacts) |
 | Best AT | 0.30 |
 | inner-CV C | 1.0 (4/5 folds), 0.01 (fold 4) |
 | Runtime | 234.8 min |
@@ -934,11 +935,11 @@ SentinelFatal2-clean/
 │   │   └── alert_extractor.py       ← extract_recording_features(scores, AT) → 12 feats
 │   │
 │   ├── rules/
-│   │   ├── baseline.py              ← compute_baseline(fhr, fs) → BaselineResult
-│   │   ├── variability.py           ← compute_variability(fhr, fs) → VariabilityResult
-│   │   ├── decelerations.py         ← compute_decelerations(fhr, uc, fs) → DecelerationSummary
-│   │   ├── sinusoidal.py            ← compute_sinusoidal(fhr, fs) → SinusoidalResult
-│   │   └── tachysystole.py          ← compute_tachysystole(uc, fs) → TachysystoleResult
+│   │   ├── baseline.py              ← calculate_baseline(fhr, fs) → BaselineResult
+│   │   ├── variability.py           ← calculate_variability(fhr, fs) → VariabilityResult
+│   │   ├── decelerations.py         ← detect_decelerations(fhr, uc, fs) → DecelerationSummary
+│   │   ├── sinusoidal.py            ← detect_sinusoidal_pattern(fhr, fs) → SinusoidalResult
+│   │   └── tachysystole.py          ← detect_tachysystole(uc, fs) → TachysystoleResult
 │   │
 │   └── features/
 │       └── clinical_extractor.py    ← extract_clinical_features(signal) → [11 floats]
@@ -1051,10 +1052,11 @@ class SentinelRealtime:
         pt_feats = extract_recording_features(self.window_scores, threshold=at)
 
         # 11 clinical features (על 30 הדקות האחרונות)
-        full_signal = np.stack([
-            np.array(list(self.ring_buffer_fhr)),
-            np.array(list(self.ring_buffer_uc))
-        ]) / [160, 100]  # normalize roughly
+        fhr_raw = np.array(list(self.ring_buffer_fhr))
+        uc_raw  = np.array(list(self.ring_buffer_uc))
+        fhr_norm = (fhr_raw - 50.0) / 160.0   # FHR: (bpm-50)/160 → [0,1]
+        uc_norm  = uc_raw / 100.0              # UC:  mmHg/100 → [0,1]
+        full_signal = np.stack([fhr_norm, uc_norm])
         clin_feats = extract_clinical_features(full_signal)
 
         # 2 global features
