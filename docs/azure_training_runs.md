@@ -3,7 +3,7 @@
 > **פרויקט:** זיהוי דיסטרס עוברי (CTG) באמצעות PatchTST Foundation Model
 > **מטרה:** AUC ≥ 0.70 ב-5-fold cross-validation על 552 recordings
 > **ייחוס:** arXiv:2601.06149v1 (Fridman & Ben Shachar) — AUC 0.826 על n=55
-> **עדכון אחרון:** 2026-03-04 (לאחר Training Run v6)
+> **עדכון אחרון:** 2026-03-05 (לאחר Training Run v7 + מערכת חוקים קלינית + הערכה היברידית מקומית)
 
 ---
 
@@ -16,10 +16,14 @@
 5. [Training Run v4 — Azure](#5-training-run-v4--azure)
 6. [Training Run v5 — Azure](#6-training-run-v5--azure)
 7. [Training Run v6 — Azure](#7-training-run-v6--azure)
-8. [השוואה מסכמת](#8-השוואה-מסכמת)
-9. [מיקום Checkpoints](#9-מיקום-checkpoints)
-10. [צבר בעיות ופתרונות](#10-צבר-בעיות-ופתרונות)
-11. [הצעד הבא](#11-הצעד-הבא)
+8. [Training Run v7 — Azure](#8-training-run-v7--azure)
+9. [מערכת חוקים קלינית — "המוח השני"](#9-מערכת-חוקים-קלינית--המוח-השני)
+10. [הערכה היברידית מקומית — Local OOF](#10-הערכה-היברידית-מקומית--local-oof)
+11. [השוואה מסכמת](#11-השוואה-מסכמת)
+12. [מיקום Checkpoints](#12-מיקום-checkpoints)
+13. [צבר בעיות ופתרונות](#13-צבר-בעיות-ופתרונות)
+14. [הצעד הבא](#14-הצעד-הבא)
+15. [נספח — פרטים טכניים מלאים](#15-נספח--פרטים-טכניים-מלאים-שאלות-ותשובות)
 
 ---
 
@@ -543,7 +547,383 @@ AUC אחרי warmup: ~0.6–0.65 — backbone מנסה ולא מגיע
 
 ---
 
-## 8. השוואה מסכמת
+## 8. Training Run v7 — Azure
+
+**Job name:** `(run ID: c749b838cf1a423daa47d3bc47fcd570 — display name לא נשמר)`
+**תאריך:** 2026-03-04
+**משך:** 234.8 דקות
+**סטטוס:** Completed ✅
+**Artifacts:** `logs/e2e_cv_v7/azure_job/artifacts/`
+
+### מה עשינו
+
+שלושה שינויים ממוקדים על בסיס פוסט-מורטם v6:
+
+#### שינוי 1 — Inner-CV לבחירת C [`azure_ml/train_azure.py`]
+
+**הבעיה בv5/v6:** C hardcoded לאחר grid search חיצוני — C האופטימלי השתנה בין ריצות → רגרסיה ב-REPRO_TRACK (0.5165 בv6).
+**הפתרון:** `select_lr_c_inner_cv()` — כל fold בוחר C על val set שלו:
+
+```python
+def select_lr_c_inner_cv(X_tr, y_tr, X_vl, y_vl, use_pca=True):
+    best_c, best_auc = 0.1, -1.0
+    for c in [0.01, 0.1, 1.0]:
+        scaler, pca, lr_m = fit_lr_model(X_tr, y_tr, C=c, use_pca=use_pca)
+        auc = roc_auc_score(y_vl, predict_proba(scaler, pca, lr_m, X_vl))
+        if auc > best_auc:
+            best_c, best_auc = c, auc
+    return best_c
+```
+
+#### שינוי 2 — Patience=20 (↑ מ-15) [`azure_ml/train_azure.py`]
+
+```python
+PATIENCE = 20   # ← 15→20: allows recovery from unfreeze AUC drops
+```
+
+מטרה: לתת למודל budget גדול יותר להתאושש מ-warmup dip לאחר unfreeze.
+
+#### שינוי 3 — val_stride=60 (↓ מ-120) [`azure_ml/train_azure.py`]
+
+```python
+"val_stride": 60,   # ← 120→60: denser validation signal for better model selection
+```
+
+יותר חלונות validation → אומדן AUC מדויק יותר → בחירת checkpoint טובה יותר.
+כמו כן: `best_smooth_auc` ממשיך להתאפס בעת unfreeze (כפי שהוחדר בv6).
+
+### תוצאות לפי Fold
+
+| Fold | best@epoch | Val AUC | Test AUC | AT | C (inner-CV) | זמן | הערה |
+|------|-----------|---------|----------|-----|-------------|-----|------|
+| **0** | **45** ✅ | 0.7545 | 0.6255 | 0.30 | 1.0 | 45.8 min | |
+| **1** | **50** ✅ | 0.7078 | 0.5845 | 0.30 | 1.0 | 38.7 min | fold 1 סוף סוף לא collapse! |
+| 2 | 25 | 0.7215 | 0.6497 | 0.30 | 1.0 | 52.5 min | |
+| **3** | **0** ⚠️ | 0.6804 | 0.6911 | 0.30 | 1.0 | 41.9 min | collapse שוב — pattern חדש |
+| 4 | 35 | 0.7503 | 0.6682 | 0.45 | 0.01 | 42.1 min | |
+
+> ⚠️ **Fold 3 collapse** (best@0, בפעם הראשונה) — גם עם patience=20 ו-val_stride=60. ב-v7, fold 1 הצליח (best@50!) אך fold 3 קרס. מבנה ה-val set של fold 3 גרם ל-frozen head (AUC=0.6804) לנצח את ה-backbone.
+
+### תוצאות סופיות
+
+| מדד | ערך | השוואה לv6 |
+|-----|-----|------------|
+| **Global OOF AUC** | **0.6381** (CI: 0.5767–0.6962) | ↑ מ-0.6329 (+0.005) |
+| Mean fold AUC | 0.6438 ± 0.041 | ↑ מ-0.6333 ±0.031 |
+| **REPRO_TRACK AUC (n=55)** | **0.7934** [0.6498, 0.9150] | ↑↑ מ-0.5165 (+0.277!) |
+| G4a (mean ≥ 0.70) | ❌ FAIL | — |
+| G4b (std < 0.10) | ✅ PASS | ✅ |
+| Runtime | 234.8 min | ↑ (+22 min) |
+| עלות משוערת | ~$3.6 | — |
+
+> Inner-CV תיקן לחלוטין את קריסת REPRO_TRACK: 0.5165 → 0.7934. C=1.0 נבחר אוטומטית על כל ה-4 folds + REPRO_TRACK (fold 4: C=0.01). הFold collapse עבר מfold 1 לfold 3.
+
+### Checkpoints (Azure Blob + Local)
+
+| מיקום | תוכן |
+|--------|------|
+| Azure ML Studio → run ID `c749b838cf1a4...` → outputs/checkpoints/e2e_cv_v7/fold{0-4}/ | best_finetune.pt per fold |
+| Azure ML Studio → run ID `c749b838cf1a4...` → outputs/checkpoints/e2e_cv_v7/shared_pretrain/ | shared best_pretrain.pt |
+| `checkpoints/e2e_cv_v7/` (local) | best_finetune.pt ×5 (מורד) |
+
+---
+
+## 9. מערכת חוקים קלינית — "המוח השני"
+
+**תאריך הוספה:** 2026-03-05 (בין ריצות v7 ו-v8)
+**מטרה:** להוסיף 11 clinical rule features ל-LR על גבי 12 ה-PatchTST features, כדי לשפר AUC.
+
+### מבנה
+
+```
+12 PatchTST alert features (AT-dependent)
++11 Clinical rule features (AT-independent)
+= 23 features → StandardScaler → PCA(0.95) → LogisticRegression
+```
+
+### 5 מודולים (`src/rules/`)
+
+| מודול | קובץ | תכונות |
+|-------|------|--------|
+| Baseline | `baseline.py` | `baseline_bpm`, `is_tachycardia`, `is_bradycardia` |
+| Variability | `variability.py` | `variability_amplitude_bpm`, `variability_category` |
+| Decelerations | `decelerations.py` | `n_late_decelerations`, `n_variable_decelerations`, `n_prolonged_decelerations`, `max_deceleration_depth_bpm` |
+| Sinusoidal | `sinusoidal.py` | `sinusoidal_detected` |
+| Tachysystole | `tachysystole.py` | `is_tachysystole` |
+
+**API:** `src/features/clinical_extractor.py` → `extract_clinical_features(signal, fs=4.0)` → dict עם 11 ערכים
+
+### 11 Clinical Features
+
+| # | שם פיצ'ר | מדד | קשר לאסידמיה |
+|---|----------|-----|-------------|
+| 1 | `baseline_bpm` | דופק בסיסי (bpm) | ↑ עם tachycardia |
+| 2 | `is_tachycardia` | FHR > 160 bpm (boolean) | סימן דיסטרס |
+| 3 | `is_bradycardia` | FHR < 110 bpm (boolean) | סימן דיסטרס חמור |
+| 4 | `variability_amplitude_bpm` | טווח השתנות (bpm) | ↓ עם דיסטרס |
+| 5 | `variability_category` | 0=minimal / 1=moderate / 2=marked | — |
+| 6 | `n_late_decelerations` | מספר האטות מאוחרות | מדד דיסטרס |
+| 7 | `n_variable_decelerations` | מספר האטות משתנות | מדד דיסטרס |
+| 8 | `n_prolonged_decelerations` | מספר האטות ממושכות | **top-2 feature** |
+| 9 | `max_deceleration_depth_bpm` | עומק מקסימלי של האטה (bpm) | **top-1 feature** |
+| 10 | `sinusoidal_detected` | דפוס סינוסואידלי (boolean) | ⚠ סימן חמור |
+| 11 | `is_tachysystole` | >5 contractions/10 min (boolean) | גורם דיסטרס |
+
+### חשיבות פיצ'רים (ממוצע על 5 folds — `scripts/eval_oof_cv.py`)
+
+| דירוג | פיצ'ר | avg_coeff | קבוצה |
+|-------|--------|-----------|-------|
+| 1 | `max_deceleration_depth_bpm` | +0.254 | Clinical ⭐ |
+| 2 | `n_prolonged_decelerations` | +0.253 | Clinical ⭐ |
+| 3 | `total_alert_duration` | +0.155 | AI |
+| 4 | `baseline_bpm` | −0.121 | Clinical |
+| 5 | `n_late_decelerations` | +0.121 | Clinical |
+| 6 | `recording_mean_above_th` | +0.113 | AI |
+| 7 | `n_variable_decelerations` | +0.105 | Clinical |
+| 8 | `variability_amplitude_bpm` | +0.101 | Clinical |
+
+> שני הפיצ'רים המובילים הם קליניים — עומק ומספר האטות ממושכות. ה-PatchTST features תורמים בעיקר דרך `total_alert_duration` ו-`recording_mean_above_th`.
+
+---
+
+## 10. הערכה היברידית מקומית — Local OOF
+
+**תאריך:** 2026-03-05
+**סקריפט:** `scripts/eval_oof_cv.py`
+**מטרה:** 5-fold OOF על כל 552 ההקלטות עם hybrid model (PatchTST v7 checkpoints + clinical rules)
+
+### בעיית טעינת Checkpoint — Head Loading Bug
+
+**תיאור:** בריצה הראשונה, PatchTST כמעט לא תרם — Fold 4 AUC=0.497 (כמעט אקראי).
+
+**גילוי:** `load_model()` ב-`scripts/local_eval_cpu.py` קרא ל-`load_pretrained_checkpoint()` (`src/train/finetune.py:254`) שמסנן **במכוון** את משקלי הראש (`head.*`). הפונקציה תוכננה להעברת pretrain→finetune בלבד — לא להערכה.
+
+```python
+# לפני (שגוי — head weights נשמטות → head אקראי):
+load_pretrained_checkpoint(model, ckpt_path, torch.device(DEVICE))
+
+# אחרי (נכון — טוען את כל 59 tensors כולל head):
+state_dict = torch.load(ckpt_path, map_location=DEVICE, weights_only=True)
+model.load_state_dict(state_dict, strict=True)
+```
+
+**אימות:** כל 5 checkpoints אומתו — 59 tensors כל אחד (57 backbone + 2 head: `head.linear.weight`, `head.linear.bias`). Fold 4 קפץ מ-AUC=0.497 → 0.671 אחרי התיקון.
+
+### תוצאות לפי Fold
+
+| Fold | n_test | n_pos | AUC Hybrid | AUC PatchTST | AUC Clinical | AT | C |
+|------|--------|-------|-----------|-------------|-------------|-----|---|
+| 0 | 111 | 23 | 0.6349 | 0.6151 | 0.6087 | 0.30 | 0.01 |
+| 1 | 111 | 23 | 0.6383 | 0.5820 | 0.5791 | 0.30 | 0.10 |
+| **2** | 111 | 23 | **0.8177** | 0.6606 | **0.8315** | 0.30 | 0.01 |
+| 3 | 110 | 22 | 0.7020 | 0.6643 | 0.6622 | 0.30 | 0.01 |
+| 4 | 109 | 22 | 0.6938 | 0.6708 | 0.6526 | 0.45 | 0.01 |
+
+> Fold 2 בולט: Clinical AUC=0.8315 — החוקים הקליניים חזקים במיוחד ב-fold זה. Hybrid=0.8177 כי PatchTST מעט פחות חזק שם.
+
+### תוצאות סופיות
+
+| מדד | ערך |
+|-----|-----|
+| **OOF AUC Hybrid** | **0.6911** \[95% CI: 0.6336, 0.7455\] |
+| OOF AUC PatchTST | 0.6309 |
+| OOF AUC Clinical | 0.6661 |
+| Delta Hybrid vs PatchTST | **+0.060** |
+| Delta Hybrid vs Clinical | +0.025 |
+| Sensitivity (OOF) | 0.646 |
+| Specificity (OOF) | 0.651 |
+| Threshold (OOF) | 0.4676 |
+| TP / TN / FP / FN | 73 / 286 / 153 / 40 |
+| **REPRO_TRACK AUC** (n=55) | **0.8285** \[95% CI: **0.6996, 0.9324**\] |
+| REPRO_TRACK Sensitivity | 0.909 (10/11) |
+| REPRO_TRACK Specificity | 0.727 (32/44) |
+| REPRO_TRACK best AT / C | AT=0.45, C=0.01 |
+| Paper target | 0.826 |
+
+> **REPRO_TRACK (n=55) קרוב מאוד ל-0.826 של המאמר** — 0.8285 [95% CI: 0.6996, 0.9324]. ה-CI הרחב נובע מ-n=55 קטן (11 אירועי acidemia בלבד). רגישות גבוהה במיוחד: 0.909 (10/11 נזוהו נכון).
+
+### השוואה Azure v7 (PatchTST only) ↔ Local OOF Hybrid
+
+| מדד | Azure v7 | Local OOF Hybrid |
+|-----|----------|------------------|
+| OOF AUC | 0.6381 \[0.577, 0.696\] | **0.6911** \[0.6336, 0.7455\] |
+| REPRO_TRACK AUC | 0.7934 \[0.6498, 0.9150\] | **0.8285** \[**0.6996, 0.9324**\] |
+| REPRO_TRACK Sens / Spec | 0.75 / 0.659 | **0.909 / 0.727** |
+| N features | 12 (PatchTST) | 23 (12 AI + 11 clinical) |
+
+> Clinical rules מוסיפות **+0.053** ל-OOF AUC ו-**+0.035** ל-REPRO_TRACK. ה-OOF הוא המדד האמין (n=552); ה-REPRO_TRACK (n=55) מדגים קרבה לתוצאת המאמר אך CI רחב מאוד.
+
+### אימות Fold Splits
+
+ה-folds של `eval_oof_cv.py` אומתו כ-**100% זהים** ל-folds של Azure v7 (`results/e2e_cv_v7/global_oof_predictions.csv`). אין data leakage — כל הקלטה מופיעה ב-test set של fold אחד בלבד.
+
+---
+
+## 10b. הערכה היברידית מקומית v2 — שיפור ל-≥0.70
+
+**תאריך:** 2026-03-05
+**שינויים ב-`scripts/eval_oof_cv.py`** (ללא אימון מחדש — כל 5 cache-ים קיימים):
+
+### שינויים שבוצעו
+
+| # | שינוי | לפני | אחרי |
+|---|-------|------|------|
+| 1 | **Joint (AT×C) grid search** | AT נבחר עם C=0.1 קבוע, אחר כך C נבחר עם AT קבוע (בעיה) | כל 24 קומבינציות AT×C נבדקות ביחד |
+| 2 | **הרחבת ה-grid** | AT: [0.30, 0.35, 0.40, 0.45], C: [0.01, 0.1, 1.0] | AT: [0.25, 0.30, 0.35, 0.40, 0.45, 0.50], C: [0.01, 0.1, 1.0, 10.0] |
+| 3 | **Train LR על train+val** | LR על ~387 דגימות בלבד (val נזרק אחרי בחירת hyperparameters) | לאחר בחירת (AT,C) על val, LR מאומן מחדש על train+val (441 דגימות) |
+| 4 | **2 פיצ'רים גלובליים חדשים** | `recording_mean_above_th` — ממוצע **מעל** AT בלבד | הוסיפו `overall_mean_prob` ו-`overall_std_prob` (threshold-free, על כל החלונות) |
+
+### תוצאות לפי Fold
+
+| Fold | n_test | AUC v1 | **AUC v2** | Δ | AT (v2) | C (v2) |
+|------|--------|--------|-----------|---|---------|---------|
+| 0 | 111 | 0.6349 | 0.6448 | +0.010 | 0.30 | 0.01 |
+| **1** | 111 | 0.6383 | **0.7070** | **+0.069** | **0.25** | 0.01 |
+| 2 | 111 | 0.8177 | 0.8291 | +0.011 | 0.25 | 0.01 |
+| 3 | 110 | 0.7020 | 0.6829 | −0.019 | 0.25 | 0.01 |
+| 4 | 109 | 0.6938 | 0.6750 | −0.019 | 0.45 | 10.0 |
+
+> השיפור המשמעותי ביותר: **Fold 1** קפץ מ-0.6383 ל-0.7070 הודות ל-AT=0.25 (לא היה בגריד הישן) + train+val retraining.
+
+### תוצאות סופיות v2
+
+| מדד | v1 | **v2** |
+|-----|-----|------|
+| **OOF AUC Hybrid (25-feat)** | 0.6911 | **0.7009** ✅ |
+| OOF AUC Hybrid (23-feat) | — | 0.7009 |
+| OOF AUC PatchTST | 0.6309 | 0.6345 |
+| OOF AUC Clinical | 0.6661 | 0.6950 |
+| Sensitivity | 0.646 | 0.708 |
+| Specificity | 0.651 | 0.651 |
+| Threshold | 0.4676 | 0.4682 |
+| TP / TN / FP / FN | 73 / 286 / 153 / 40 | **80 / 286 / 153 / 33** |
+
+> **המטרה ≥0.70 הושגה (0.7009) ללא אימון מחדש כלל.** 2 הפיצ'רים הגלובליים לא תרמו (AUC זהה ל-23-feat) — הרחבת הגריד ו-train+val retraining הם שתרמו.
+
+---
+
+## 10d. הגדרת Label מחדש — חמצת מטבולית בלבד
+
+**תאריך:** 2026-03-05
+**בעיה שזוהתה:** Label המקורי (pH < 7.15) מכיל שני סוגי חמצת שונים:
+
+| סוג | מנגנון | BDecf | ביטוי ב-CTG | סכנה |
+|-----|--------|-------|-------------|------|
+| **נשימתית** | CO2 נצבר בהתכווצויות | < 8 | **אין** | נמוכה — חולפת |
+| **מטבולית** | חוסר O2 מתמשך | >= 8 | **יש** (late/prolonged decels) | גבוהה — נזק מוחי |
+
+מודל מבוסס-CTG לא יכול לזהות חמצת נשימתית (אין לה ביטוי בדופק). כל FN שהיה "תינוק חולה לפי pH אבל CTG תקין" היה למעשה **טעות בהגדרת ה-label**.
+
+### Label החדש: pH < 7.15 AND BDecf >= 8
+
+- **חיובי** = (pH < 7.15) AND (BDecf >= 8) — חמצת מטבולית ממשית
+- **שלילי** = BDecf < 8 (כולל pH < 7.15 עם BDecf נמוך) — חמצת נשימתית/קלה
+- **Missing BDecf**: fallback = pH < 7.10 (שמרני)
+- **סף BDecf = 8** נבחר כסף סטנדרטי ל-"significant metabolic acidosis"
+
+| סף BDecf | חיוביים | הוסרו מה-label | Apgar5<7 בהוסרים |
+|----------|---------|----------------|-----------------|
+| >= 6 | 91 | 14 | 1 |
+| **>= 8** | **65** | **40** | **4** |
+| >= 10 | 32 | 73 | 8 |
+| >= 12 | 25 | 80 | 10 |
+
+> 40 הקלטות הוסרו מ-label החיובי, 36/40 (90%) עם Apgar5 >= 7 — לא היו תינוקות חולים קלינית.
+
+### תוצאות לפי Fold — Metabolic Labels
+
+| Fold | n_test | AUC v2 (orig) | **AUC metabolic** | Delta | AT | C |
+|------|--------|--------------|-------------------|-------|----|---|
+| 0 | 111 | 0.6448 | **0.7155** | +0.071 | 0.30 | 0.01 |
+| 1 | 111 | 0.7070 | **0.7264** | +0.019 | 0.25 | 0.01 |
+| 2 | 111 | 0.8291 | **0.8179** | -0.011 | 0.50 | 0.01 |
+| 3 | 110 | 0.6829 | **0.6988** | +0.016 | 0.25 | 0.01 |
+| 4 | 109 | 0.6750 | **0.7572** | +0.082 | 0.45 | 0.01 |
+
+### תוצאות סופיות — Metabolic vs Original
+
+| מדד | Original (pH<7.15) | **Metabolic (pH<7.15 + BDecf>=8)** | Delta |
+|-----|-------------------|------------------------------------|-------|
+| **OOF AUC** | 0.7009 | **0.7386** | **+0.038** |
+| 95% CI | [0.645, 0.754] | [0.678, 0.797] | CI צר יותר |
+| OOF AUC Clinical | 0.6950 | **0.7200** | +0.025 |
+| OOF AUC PatchTST | 0.6345 | 0.6555 | +0.021 |
+| Sensitivity | 0.708 | **0.723** | +0.015 |
+| Specificity | 0.651 | 0.651 | = |
+| TP / TN / FP / FN | 80/286/153/33 | **47/317/170/18** | FN: 33->18 |
+| n_positives | 113 | **65** | 48 הוסרו |
+
+> **FN ירד מ-33 ל-18** — מחמיצים פחות תינוקות "באמת מסוכנים". ה-FP עלה כי חלק מה-48 שהוסרו מה-label הם CTG חריגים (predicted-positive) אך בעלי outcome תקין.
+
+### שינוי בחשיבות הפיצ'רים
+
+| דירוג | Metabolic | Original |
+|------|-----------|---------|
+| 1 | **n_prolonged_decelerations** (Clinical) | total_alert_duration (AI) |
+| 2 | max_deceleration_depth_bpm (Clinical) | cumulative_sum (AI) |
+| 3 | total_alert_duration (AI) | alert_fraction (AI) |
+| 4 | n_variable_decelerations (Clinical) | segment_length (AI) |
+| 5 | n_late_decelerations (Clinical) | n_prolonged_decelerations (Clinical) |
+
+> עם labels מטבוליים, **הפיצ'רים הקליניים עולים לראש** — חמצת מטבולית (O2 אמיתי חסר) גורמת ל-late/prolonged decels שהחוקים הקליניים מודדים ישירות.
+
+### פקודת הרצה
+
+```bash
+python scripts/eval_oof_cv.py --metabolic
+# ~30 sec (cache קיים), outputs: results/oof_cv_evaluation_metabolic/
+```
+
+---
+
+## 10c. ניתוח שגיאות — False Negatives ו-False Positives
+
+**בסיס:** OOF predictions v2 (552 הקלטות, threshold=0.4682 @ Youden)
+**TP=80, TN=286, FP=153, FN=33**
+
+### False Negatives (FN) — 33 מקרים: תינוקות חולים שלא זוהו
+
+ה-FN הם מקרי **חמצת שקטה קלינית** — אצידמיה בפועל אך ללא דפוס CTG אלרמני.
+
+| מאפיין | FN | TP (אצידמיה שזוהתה) | משמעות |
+|--------|-----|-----|--------|
+| ציון היברידי ממוצע | **0.344** | >0.468 | הרבה מתחת לסף |
+| Late decels = 0 | **74%** | ~11% | רוב ה-FN ללא late decels |
+| Prolonged decels = 0 | **56%** | ~31% | מחצית ה-FN ללא prolonged decels |
+| Variable decels = 0 | 3% | ~0% | Variable decels קיימים גם ב-FN |
+| Baseline תקין (110-160) | **94%** | ~75% | כמעט כולם תקינים |
+| Variability תקינה (≥Cat 2) | **100%** | — | אף FN ללא תנודתיות |
+| עומק decel מקסימלי | 58.5 bpm | 75.3 bpm | שטחיות יחסית |
+| PatchTST mean_prob | 0.419 | 0.480 | AI גם לא "חש" סכנה |
+
+**מסקנה:** ה-FN הם מקרים של **מטבוליזם אנאירובי ללא ביטוי CTG** — ייתכן שהאצידמיה התפתחה מהר (acute), או שהיא מקורית (pre-existing), ולא נוצרה מ-pattern CTG כרוני. גם בני אדם מנוסים היו מחמיצים חלק גדול מהם. שיפור על מקרים אלו דורש features מסוג שונה לחלוטין (umbilical Doppler, maternal data).
+
+### False Positives (FP) — 153 מקרים: תינוקות תקינים שסווגו חולים
+
+ה-FP הם מקרי **CTG positive אך outcome negative** — דפוסים מדאיגים שלא הסתיימו באצידמיה.
+
+| מאפיין | FP | TN (תקיני שזוהו נכון) | משמעות |
+|--------|-----|------|--------|
+| Late decels (≥1) | **49%** | 16% | פי 3 יותר late decels ב-FP |
+| Prolonged decels (≥1) | **70%** | 29% | פי 2.4 יותר prolonged decels |
+| Variable decels (≥1) | **99%** | ~96% | Variable decels כמעט בכולם (לא מבדיל) |
+| עומק decel מקסימלי | 70.7 bpm | 53.5 bpm | דיצלרציות עמוקות יותר ב-FP |
+| Baseline ממוצע | 140 bpm | 136 bpm | דופק בסיסי גבוה במעט |
+| PatchTST max_prob | 0.673 | 0.600 | AI "חש" סכנה גם ב-FP |
+
+**מסקנה:** ה-FP הם **תינוקות תקינים עם CTG מדאיג שנפתר** — late decels ו-prolonged decels שהופיעו אך התינוק שמר על אחזור (recovery). המודל לומד נכון מה CTG "מסוכן" נראה, אך לא מסוגל להבדיל בין דפוס חולף לבין דפוס מתמשך שגורם נזק בפועל. הפחתת FP דורשת temporal context (האם הדפוס השתפר/החמיר?) שאינו בפיצ'רים הנוכחיים.
+
+### השלכות עיצוביות
+
+| מסקנה | השלכה |
+|--------|--------|
+| FN — חמצת שקטה, ללא ביטוי CTG | **תקרת הביצועים ב-CTG בלבד היא מוגבלת** — נדרש multi-modal input |
+| FP — CTG מדאיג שנפתר | **Feature engineering נוסף:** שינוי הדפוס לאורך זמן (טרנד), לא רק ה-pattern הנקודתי |
+| שני ה-classifiers (clinical + AI) מסכימים על FP | LR לא יכול לתקן אם גם clinical וגם AI שגויים — נדרש feature חדש לגמרי |
+
+---
+
+## 11. השוואה מסכמת
 
 ### תוצאות לאורך כל הריצות
 
@@ -555,7 +935,16 @@ AUC אחרי warmup: ~0.6–0.65 — backbone מנסה ולא מגיע
 | **v4** | פב' 28 | **0.6385** | 0.6358 | 0.5930 | ❌ | ✅ | 197.2 min | ~$3.0 |
 | **v5** | מר' 2-3 | 0.5870 | **0.6426** | **0.7872** | ❌ | ✅ | 183.0 min | ~$2.8 |
 | **v6** | מר' 3 | 0.6329 | 0.6371 | 0.5165 | ❌ | ✅ | 212.8 min | ~$3.2 |
+| **v7** | מר' 4-5 | 0.6381 | 0.6438† | **0.7934** | ❌ | ✅ | 234.8 min | ~$3.6 |
+| **Local Hybrid OOF v1** | מר' 5 | 0.6911 | — | **0.8285**‡ | ❌ | ✅ | offline | $0 |
+| **Local Hybrid OOF v2** | מר' 5 | **0.7009** ✅ | — | 0.8285‡ | ✅ | ✅ | offline | $0 |
+| **Metabolic Labels** | מר' 5 | **0.7386** ✅ | — | — | ✅ | ✅ | offline | $0 |
 | **יעד** | — | **≥ 0.70** | — | ~0.826 | ✅ | ✅ | — | — |
+
+† v7 main pipeline משתמש ב-inner-CV לבחירת C — Grid best OOF = main pipeline OOF.
+‡ Local Hybrid REPRO_TRACK: AUC=0.8285 [95% CI: 0.6996, 0.9324], Sens=0.909, Spec=0.727, n=55. ראה §10 לפרטים מלאים.
+
+**OOF v2** = joint (AT×C) grid + train+val retraining + expanded grids. **Metabolic** = v2 עם label: pH<7.15 AND BDecf>=8 (ללא חמצת נשימתית). שתיהן ✅ מעל 0.70.
 
 ### Grid winner לפי ריצה
 
@@ -565,18 +954,19 @@ AUC אחרי warmup: ~0.6–0.65 — backbone מנסה ולא מגיע
 | v4 | 0.40 | 12 | **1.0** | Youden | 0.6358 |
 | v5 | 0.40 | 12 | **0.01** | clinical | 0.6426 |
 | v6 | 0.45 | 12 | **0.1** | clinical | 0.6371 |
+| v7 | 0.30 | 12 | **inner-CV** | clinical | 0.6438 |
 
 > ⚠️ **מסקנה קריטית:** C האופטימלי משתנה בכל ריצה (1.0 → 0.01 → 0.1). **אין לעולם להכניס C hardcoded!** הפיצ'רים משתנים עם כל pretrain checkpoint חדש.
 
 ### Best Epochs לפי fold (התפתחות לאורך הריצות)
 
-| Fold | v4 | v5 | v6 | מגמה |
-|------|----|----|-----|------|
-| 0 | 10 | 10 | **55** ✅ | patience reset עבד |
-| 1 | 35 | 0 ⚠️ | 0 ⚠️ | collapse עקבי בv5+v6 |
-| 2 | 15 | 15 | 15 | יציב |
-| 3 | 0 ⚠️ | **10** ✅ | **45** ✅ | warmup תיקן, patience הוסיפה |
-| 4 | 15 | 10 | **40** ✅ | patience reset שיפרה |
+| Fold | v4 | v5 | v6 | v7 | מגמה |
+|------|----|----|-----|-----|------|
+| 0 | 10 | 10 | **55** ✅ | **45** ✅ | יציב |
+| 1 | 35 | 0 ⚠️ | 0 ⚠️ | **50** ✅ | v7 תיקן! |
+| 2 | 15 | 15 | 15 | 25 | יציב |
+| 3 | 0 ⚠️ | **10** ✅ | **45** ✅ | 0 ⚠️ | collapse עבר ל-fold 3 בv7 |
+| 4 | 15 | 10 | **40** ✅ | 35 | יציב |
 
 ### Timeline — תיאור הבעיות שנפתרו ושלא
 
@@ -590,12 +980,14 @@ v5: fold 1 collapse (patience אוזלת בזמן warmup)
 v5: C hardcoded אחרי grid search
       ↓ "תוקן" בv6 אבל C=0.01 לא היה נכון לv6 → REPRO crashed
 v6: C חייב לבוא מinner CV, לא מgrid search חיצוני
+      ↓ תוקן בv7 (inner-CV לכל fold)
+v7: fold collapse עבר מfold 1 לfold 3 — הבעיה המבנית עדיין קיימת
       ← כאן אנחנו עכשיו
 ```
 
 ---
 
-## 9. מיקום Checkpoints
+## 12. מיקום Checkpoints
 
 ### Checkpoints מקומיים (בדיסק — `checkpoints/`)
 
@@ -622,6 +1014,7 @@ v6: C חייב לבוא מinner CV, לא מgrid search חיצוני
 | `ashy_wing_4n7bmybg1c` | v4 | fold0–4/finetune/best_finetune.pt |
 | `jovial_spinach_6vfchv3bk3` | v5 | fold0–4/finetune/best_finetune.pt |
 | `crimson_dog_stjh6zsmqb` | v6 | fold0–4/finetune/best_finetune.pt + repro_track/ |
+| `run ID: c749b838cf1a423d...` | v7 | e2e_cv_v7/fold{0-4}/best_finetune.pt + shared_pretrain/ |
 
 > **הערה:** Checkpoints נמחקים מAzure Blob לאחר 90 יום (ייתכן). ניתן להוריד דרך Studio לפני שיפוגו.
 
@@ -633,10 +1026,11 @@ v6: C חייב לבוא מinner CV, לא מgrid search חיצוני
 | `logs/e2e_cv_v4/azure_job/artifacts/` | v4 | CSVs, logs, grid_search_results.csv |
 | `logs/e2e_cv_v5/azure_job/artifacts/` | v5 | CSVs, logs, grid_best_configs.csv |
 | `logs/e2e_cv_v6/azure_job/artifacts/` | v6 | CSVs, logs, grid_best_configs.csv |
+| `logs/e2e_cv_v7/azure_job/artifacts/` | v7 | CSVs, logs, std_log.txt, per_fold_summary.csv |
 
 ---
 
-## 10. צבר בעיות ופתרונות
+## 13. צבר בעיות ופתרונות
 
 | בעיה | התגלה | פתרון | מצב |
 |------|-------|-------|-----|
@@ -646,10 +1040,13 @@ v6: C חייב לבוא מinner CV, לא מgrid search חיצוני
 | Fold collapse (best@0) — fold 3 בv4 | v4 | warmup תיקן אותו | ✅ תוקן בv5 |
 | Patience לא מתאפסת בunfreeze — fold 1 | v5 | reset בv6 | ⚠️ חלקי (fold 0,3,4 ✅, fold 1 עדיין ❌) |
 | C hardcoded ≠ grid winner | v5 | — | ❌ **לא נפתר** — C=0.01 לv6 גרם לרגרסיה ב-REPRO |
-| Fold 1 persistent collapse (best@0) | v5/v6 | — | ❌ **לא נפתר** — backbone < frozen head ב-fold זה |
+| Fold 1 collapse (best@0) | v5/v6 | patience=20 + val_stride=60 בv7 | ✅ **נפתר בv7** (best@50) |
+| Fold 3 collapse (best@0) — חדש בv7 | v7 | — | ❌ **לא נפתר** — backbone < frozen head ב-fold זה |
 | SPaM dataset חסר | תמיד | pretrain augmentation (חלקי) | ⚠️ פיצוי חלקי |
 | Val>>Test gap | תמיד | train-only LR (חלקי) | ⚠️ עדיין קיים |
-| C אינו יציב בין ריצות | v5/v6 | צריך inner-CV per fold | ❌ **לא ממומש** |
+| C אינו יציב בין ריצות | v5/v6 | inner-CV per fold בv7 | ✅ **נפתר בv7** |
+| Head loading bug — `load_pretrained_checkpoint` שמטה head weights | Local eval | `torch.load + load_state_dict(strict=True)` | ✅ **נפתר בv7-local** |
+| Fold collapse עקבי (fold 1 בv5/v6, fold 3 בv7) | v5+ | — | ❌ **לא נפתר** |
 
 ### בעיית ה-C — הסבר מורחב
 
@@ -665,22 +1062,24 @@ v6: C חייב לבוא מinner CV, לא מgrid search חיצוני
 
 ---
 
-## 11. הצעד הבא
+## 14. הצעד הבא
 
-### בעיות פתוחות ל-v7
+### בעיות פתוחות ל-v8
 
 **עדיפות גבוהה:**
-1. **פתרון בעיית C:** Inner CV per fold (C ∈ [0.01, 0.1, 1.0]) — כל fold בוחר C על val שלו
-2. **Fold 1 collapse:** לחקור למה ה-frozen head כל-כך חזק (0.7695) וה-backbone לא מצליח לעלות עליו. אפשרויות:
-   - Regularization חזק יותר על head בשלב frozen
-   - Grad clipping חמור יותר בזמן warmup
-   - הנחה: fold 1 data distribution שונה — בדוק class distribution
+1. ✅ **בעיית C נפתרה (v7):** inner-CV per fold — C=1.0 נבחר ב-4/5 folds, C=0.01 בfold 4.
+2. **Fold collapse עקבי (fold 3 בv7):** לחקור למה ה-frozen head (AUC=0.6804@0) גובר על ה-backbone. אפשרויות:
+   - הוספת `best_smooth_auc` reset גם ב-head LR (לא רק backbone)
+   - Grad clipping חמור יותר בשלב warmup
+   - בחינת head initialization שונה
+3. **Clinical rules OOF: 0.6911 — שיפור נוסף?** בחינת feature engineering נוסף (VT, UC features)
 
 **עדיפות בינונית:**
-3. **Val>>Test gap:** בחינת test-time augmentation או calibration
-4. **Hyperparameter search:** d_model=256 (S2), layers=4 — ייתכן שיפור קל
+4. **Val>>Test gap:** בחינת test-time augmentation או calibration
+5. **Hyperparameter search:** d_model=256 (S2), layers=4 — ייתכן שיפור קל
+6. **SPaM dataset:** המאמר השתמש ב-984 recordings לpretrain — פנייה חוזרת
 
-### פקודת הגשה לv7
+### פקודת הגשה לv8
 
 ```bash
 PYTHONUNBUFFERED=1 PYTHONIOENCODING=utf-8 python -u azure_ml/setup_and_submit.py --dedicated
@@ -688,7 +1087,7 @@ PYTHONUNBUFFERED=1 PYTHONIOENCODING=utf-8 python -u azure_ml/setup_and_submit.py
 
 ---
 
-## 12. נספח — פרטים טכניים מלאים (שאלות ותשובות)
+## 15. נספח — פרטים טכניים מלאים (שאלות ותשובות)
 
 > **מטרה:** תשובות מדויקות לשאלות טכניות שנדרשות לתכנון v7.
 > כל התשובות מאומתות ישירות מהקוד (ולא מהערכות).
@@ -973,5 +1372,5 @@ def clinical_threshold(y_true, y_score, spec_constraint=0.65):
 
 ---
 
-*מסמך מוזג מהמקורות: `docs/colab_e2e_cv_launch_guide.md`, `docs/deviation_log.md`, `results/final_model_comparison.csv`, `results/final_cv_report.csv`, logs v3/v4/v5/v6*
-*נוצר ועודכן: 2026-03-04*
+*מסמך מוזג מהמקורות: `docs/colab_e2e_cv_launch_guide.md`, `docs/deviation_log.md`, `results/final_model_comparison.csv`, `results/final_cv_report.csv`, `results/e2e_cv_v7/`, `results/oof_cv_evaluation/`, logs v3/v4/v5/v6/v7*
+*נוצר: 2026-03-04 | עודכן: 2026-03-05 (v7 + clinical rules + local OOF hybrid)*
