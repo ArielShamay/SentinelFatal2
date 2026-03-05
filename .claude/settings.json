@@ -78,11 +78,23 @@
       "Bash(do python -c \":*)",
       "Bash(for i in 1 2 3 4 5 6)",
       "WebFetch(domain:code.visualstudio.com)",
-      "Bash(grep -h \"type.*webview\\\\|createWebviewPanel\\\\|createChatParticipant\" /c/Users/ariel/.vscode/extensions/*/package.json)"
+      "Bash(grep -h \"type.*webview\\\\|createWebviewPanel\\\\|createChatParticipant\" /c/Users/ariel/.vscode/extensions/*/package.json)",
+      "Bash(node \"/c/Users/ariel/.vscode/extensions/rtl-ai-chats-1.0.0/fix-rtl.js\")",
+      "Bash(gh auth status)",
+      "Bash(gh repo create vscode-rtl-ai-agents --public --description \"Fix Hebrew/Arabic RTL text rendering in VS Code AI chat agents: Claude Code, GitHub Copilot, ChatGPT/Codex, Gemini Code Assist\" --source=. --remote=origin --push)",
+      "Bash(xargs grep -l \"decel\\\\|baseline\\\\|variability\")",
+      "WebFetch(domain:api.github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(wc -l data/splits/e2e_cv/*.csv)",
+      "Bash(wc -l data/splits/*.csv)",
+      "Bash(test -f /c/Users/ariel/Desktop/SentinelFatal2/data/splits/train_val_test.csv)",
+      "Bash(wc -l /c/Users/ariel/Desktop/SentinelFatal2/data/splits/*.csv)"
     ],
     "additionalDirectories": [
       "c:\\Users\\ariel\\Desktop\\SentinelFatal2\\notebooks",
-      "C:\\Users\\ariel"
+      "C:\\Users\\ariel",
+      "C:\\Users\\ariel\\.vscode\\extensions",
+      "\\tmp"
     ]
   }
 }

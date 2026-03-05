@@ -125,14 +125,14 @@ N_FOLDS         = 5
 N_BOOTSTRAP     = 10_000
 SPEC_CONSTRAINT = 0.65
 AT_CANDIDATES   = [0.30, 0.35, 0.40, 0.45]
-N_FEATURES      = 12
+N_FEATURES      = 23   # 12 PatchTST + 11 clinical rule features (v8)
 VAL_EVERY_N     = 5
 PATIENCE        = 20                   # ← 15→20: allows recovery from unfreeze AUC drops
 
 # Azure ML output directories (fall back to local if env vars not set)
-OUT_RESULTS = Path(os.environ.get("AZUREML_OUTPUT_results",    str(REPO_DIR / "results"     / "e2e_cv_v3")))
-OUT_CKPTS   = Path(os.environ.get("AZUREML_OUTPUT_checkpoints", str(REPO_DIR / "checkpoints" / "e2e_cv_v3")))
-OUT_LOGS    = Path(os.environ.get("AZUREML_OUTPUT_logs",        str(REPO_DIR / "logs"        / "e2e_cv_v3")))
+OUT_RESULTS = Path(os.environ.get("AZUREML_OUTPUT_results",    str(REPO_DIR / "results"     / "e2e_cv_v8")))
+OUT_CKPTS   = Path(os.environ.get("AZUREML_OUTPUT_checkpoints", str(REPO_DIR / "checkpoints" / "e2e_cv_v8")))
+OUT_LOGS    = Path(os.environ.get("AZUREML_OUTPUT_logs",        str(REPO_DIR / "logs"        / "e2e_cv_v8")))
 
 # Azure ML always uploads ./outputs/ at job end — persistent across compute dealloc
 PERSISTENT_OUT = Path("./outputs")
@@ -284,6 +284,27 @@ for k, split in enumerate(cv_splits):
     split["test_csv"]  = fold_split_dir / f"fold{k}_test.csv"
 
 # ── 12. Helpers ────────────────────────────────────────────────────────────
+
+C_CANDIDATES = [0.01, 0.1, 1.0]
+
+def select_lr_c_inner_cv(X_tr, y_tr, X_vl, y_vl, use_pca=True):
+    """Select best LR regularization C using val set (inner-CV, no test leakage).
+
+    Replaces hardcoded C — optimal C changes with each pretrain checkpoint
+    (v4=1.0, v5=0.01, v6=0.1), so it must be selected per run, per fold.
+    """
+    best_c, best_auc = C_CANDIDATES[0], -1.0
+    for c in C_CANDIDATES:
+        sc, pca, lr = fit_lr_model(X_tr, y_tr, C=c, use_pca=use_pca)
+        scores = predict_lr(X_vl, sc, pca, lr)
+        if len(np.unique(y_vl)) > 1:
+            auc = float(roc_auc_score(y_vl, scores))
+            if auc > best_auc:
+                best_auc = auc
+                best_c   = c
+    print(f"  [inner-CV] C_candidates={C_CANDIDATES} -> best_C={best_c} (val_auc={best_auc:.4f})")
+    return best_c
+
 
 def _prune_old_checkpoints(ckpt_dir: Path, keep: int = 3) -> None:
     """Keep the `keep` most-recent epoch_*.pt files; delete the rest."""
@@ -462,8 +483,9 @@ for k, split in enumerate(cv_splits):
     torch.cuda.empty_cache()
 
     # ── LR model: train on training set ONLY (val not reused after AT selection) ──
-    # C=0.01: grid winner from v5 (grid_best_configs.csv rank 1)
-    scaler, pca, lr_m = fit_lr_model(X_tr, y_tr, C=0.01, use_pca=True)
+    # C selected per-fold via inner-CV on val set (C* changes with each pretrain run)
+    best_c = select_lr_c_inner_cv(X_tr, y_tr, X_vl, y_vl)
+    scaler, pca, lr_m = fit_lr_model(X_tr, y_tr, C=best_c, use_pca=True)
 
     # Predict on val (threshold selection) and test (evaluation)
     # Threshold selected on val — NOT on test (avoids leakage)
@@ -556,7 +578,7 @@ print(f"[G4b] {'PASS' if std_auc  <  0.10 else 'FAIL'} — std  fold AUC = {std_
 
 # Final report
 report = pd.DataFrame([{
-    "run":           "e2e_cv_v3",
+    "run":           "e2e_cv_v8",
     "config":        "A",
     "global_auc":    global_auc,
     "ci_lo":         ci_lo,
@@ -583,7 +605,7 @@ for _csv_src in [
 print("[DONE] Results persisted to ./outputs/results/")
 
 # ── 15. REPRO_TRACK — Canonical 441/56/55 split for direct comparison ──────
-# Mirrors Cell REPRO_TRACK in notebooks/09_e2e_cv_v3.ipynb.
+# Mirrors Cell REPRO_TRACK in notebooks/09_e2e_cv_v8.ipynb.
 # Trains on the fixed canonical split (not cross-validated) to produce a
 # test-set AUC comparable with prior reported results (benchmark AUC 0.826).
 print(f"\n{'='*60}")
@@ -639,8 +661,9 @@ try:
     gc.collect()
     torch.cuda.empty_cache()
 
-    # LR on training set only (same policy as main pipeline — no val leakage)
-    sc_r, pca_r, lr_r = fit_lr_model(X_tr_r, y_tr_r, C=0.01, use_pca=True)
+    # LR on training set only; C selected via inner-CV on val (same policy as main pipeline)
+    best_c_r = select_lr_c_inner_cv(X_tr_r, y_tr_r, X_vl_r, y_vl_r)
+    sc_r, pca_r, lr_r = fit_lr_model(X_tr_r, y_tr_r, C=best_c_r, use_pca=True)
 
     val_sc_r  = predict_lr(X_vl_r, sc_r, pca_r, lr_r)
     test_sc_r = predict_lr(X_te_r, sc_r, pca_r, lr_r)
@@ -697,7 +720,7 @@ print(f"{'='*60}")
 
 AT_GRID     = [0.30, 0.35, 0.40, 0.45, 0.50]
 LR_C_GRID   = [0.01, 0.1, 1.0]
-NFEAT_GRID  = [4, 12]
+NFEAT_GRID  = [4, 12, 23]   # 23 = all features (PatchTST + clinical)
 THRESH_GRID = ["clinical", "youden"]
 grid_rows   = []
 

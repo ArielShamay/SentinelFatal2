@@ -95,6 +95,11 @@ from src.train.finetune import (
 )
 from src.train.swa import SWAAccumulator
 from src.train.utils import compute_recording_auc, sliding_windows
+from src.features.clinical_extractor import (
+    extract_clinical_features,
+    N_CLINICAL_FEATURES,
+    CLINICAL_FEATURE_NAMES,
+)
 from src.inference.alert_extractor import (
     extract_alert_segments, extract_recording_features, ALERT_THRESHOLD,
 )
@@ -105,7 +110,7 @@ N_BOOTSTRAP    = 10_000
 SEED           = 42
 SPEC_CONSTRAINT = 0.65        # clinical threshold: Sens-max s.t. Spec >= this
 AT_CANDIDATES  = [0.30, 0.35, 0.40, 0.45]
-N_FEATURES     = 12
+N_FEATURES     = 12 + N_CLINICAL_FEATURES   # 12 PatchTST + 11 clinical = 23
 
 
 # ===========================================================================
@@ -246,13 +251,17 @@ def extract_features_for_split(
                     start_sample = (i + j) * inference_stride
                     scores_list.append((start_sample, float(p)))
 
-            feats = extract_recording_features(
+            # PatchTST-based features (12)
+            patchtst_feats = extract_recording_features(
                 scores_list,
                 threshold=alert_threshold,
                 inference_stride=inference_stride,
-                n_features=n_features,
+                n_features=12,
             )
-            X_rows.append(list(feats.values()))
+            # Clinical rule-based features (11) — appended after PatchTST features
+            clinical_feats = extract_clinical_features(signal, fs=4.0)
+            combined = list(patchtst_feats.values()) + clinical_feats
+            X_rows.append(combined)
             y_rows.append(label)
             ids.append(rec_id)
 

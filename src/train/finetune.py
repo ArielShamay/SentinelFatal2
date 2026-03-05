@@ -536,7 +536,9 @@ def train(
                     _warmup_target_lr_bb = lr_bb
                     apply_unfreeze_phase(model, n_top, 0.0, lr_hd, optimizer,
                                          weight_decay=float(ftcfg["weight_decay"]))
-                    patience_ctr = 0  # fresh patience budget after each unfreeze
+                    patience_ctr    = 0    # fresh patience budget after each unfreeze
+                    best_smooth_auc = 0.0  # reset checkpoint gate — guarantees at least one save per phase
+                    print(f"  [unfreeze] best_smooth_auc reset to 0.0 (prev smooth_auc={smooth_auc:.4f})")
                     print(f"  [warmup] Starting {_warmup_epochs}-epoch backbone LR ramp "
                           f"(target={lr_bb:.1e})")
                 else:           # n_top=0: initial frozen phase, no warmup needed
